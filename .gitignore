@@ -1,0 +1,22 @@
+# Secrets (see CLAUDE.md §31 — .env must never be committed)
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# uv virtual environment
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local data (SQLite database, generated PDFs — see docs/PRD.md §20, §26)
+data/
