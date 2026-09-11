@@ -3,7 +3,7 @@
 ## Milestone 1 — Foundation
 
 - [x] TASK-001 — Initialize the Python project
-- [ ] TASK-002 — Application configuration
+- [x] TASK-002 — Application configuration
 - [ ] TASK-003 — Logging
 - [ ] TASK-004 — Initial database model
 

@@ -1,0 +1,106 @@
+"""Application settings loaded from environment variables.
+
+See `.env.example` for the supported variables and their defaults, and
+docs/ARCHITECTURE.md §1.1, §5.1 and §9 for the design decisions this module
+implements:
+
+- LLM provider selection and credentials are read but not validated against
+  a live provider — the `LLMProvider` abstraction itself is a later task
+  (TODO.md, TASK-014).
+- `default_language` must be one of `SUPPORTED_LANGUAGES` (PRD §38): the
+  language is never hardcoded in application components.
+- `APP_TIMEZONE` is a fixed constant, not an environment variable: the MVP
+  uses a single, fixed timezone with no per-user or per-locale handling
+  (docs/ARCHITECTURE.md §9). Actually using it for scheduling or timestamps
+  is left to the tasks that need it (e.g. Logging, TASK-003).
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Literal
+from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, ValidationError, field_validator
+
+from app.config.errors import ConfigurationError
+
+# Editorial languages supported by AI Daily (PRD §38, ARCHITECTURE §5.1).
+# Adding a language means adding a value here plus an entry in
+# config/labels.yaml, not modifying the pipeline.
+SUPPORTED_LANGUAGES: tuple[str, ...] = ("it", "en")
+
+# Fixed application timezone (ARCHITECTURE §9 — decided, not yet wired into
+# any scheduling or logging logic).
+APP_TIMEZONE_NAME = "Europe/Rome"
+APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+
+LLMProviderName = Literal["anthropic", "openai"]
+
+
+class Settings(BaseModel):
+    """Validated application configuration (see `.env.example`)."""
+
+    llm_provider: LLMProviderName = "anthropic"
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    database_url: str = "sqlite:///data/ai_daily.db"
+    default_language: str = "it"
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
+    @field_validator("default_language")
+    @classmethod
+    def _validate_default_language(cls, value: str) -> str:
+        if value not in SUPPORTED_LANGUAGES:
+            raise ValueError(
+                f"DEFAULT_LANGUAGE must be one of {SUPPORTED_LANGUAGES}, got {value!r}"
+            )
+        return value
+
+
+def _read_env(name: str, default: str) -> str:
+    """Read a required-with-default environment variable.
+
+    An unset or empty value falls back to `default`; validation of the
+    resulting value (if any) happens on the `Settings` model itself.
+    """
+    value = os.environ.get(name)
+    return value if value else default
+
+
+def _read_optional_env(name: str) -> str | None:
+    """Read an optional environment variable (e.g. a secret with no default)."""
+    return os.environ.get(name) or None
+
+
+def load_settings(env_file: str | Path | None = None) -> Settings:
+    """Load and validate application settings.
+
+    Loads `.env` (if present) via python-dotenv, then reads process
+    environment variables. Environment variables already set take
+    precedence over values from the `.env` file, so real deployment
+    environments are never overridden by a stray local `.env`.
+
+    Raises:
+        ConfigurationError: if a value is present but invalid (e.g. an
+            unsupported `DEFAULT_LANGUAGE` or `LLM_PROVIDER`).
+    """
+    load_dotenv(dotenv_path=env_file, override=False)
+
+    try:
+        return Settings.model_validate(
+            {
+                "llm_provider": _read_env("LLM_PROVIDER", "anthropic"),
+                "anthropic_api_key": _read_optional_env("ANTHROPIC_API_KEY"),
+                "openai_api_key": _read_optional_env("OPENAI_API_KEY"),
+                "database_url": _read_env("DATABASE_URL", "sqlite:///data/ai_daily.db"),
+                "default_language": _read_env("DEFAULT_LANGUAGE", "it"),
+                "telegram_bot_token": _read_optional_env("TELEGRAM_BOT_TOKEN"),
+                "telegram_chat_id": _read_optional_env("TELEGRAM_CHAT_ID"),
+            }
+        )
+    except ValidationError as exc:
+        raise ConfigurationError(f"Invalid application configuration: {exc}") from exc
