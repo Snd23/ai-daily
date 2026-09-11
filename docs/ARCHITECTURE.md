@@ -242,3 +242,13 @@ Concrete implications for the data model and configuration already proposed in �
 No change to the module layout, data model, or MVP plan in §1–§7 was required by this policy: the architecture already separated English structural identifiers from generated, localized editorial text before this policy was formalized (§3, §5). This section makes that separation an explicit, binding rule rather than an implicit design choice.
 
 Translation status: this file has been translated to English under the Repository Language Policy (2026-09-11), preserving structure, meaning, decisions and scope unchanged.
+
+---
+
+## 9. Application Timezone (decision — 2026-09-12)
+
+**Application timezone: `Europe/Rome`.**
+
+This is the timezone AI Daily uses whenever a wall-clock time or date is meaningful to the application — for example the daily schedule referenced in PRD §27 ("07:00"), log timestamps (PRD §24), and the date assigned to an `Edition` (PRD §20). It is a single, fixed timezone for the MVP; no per-user or per-locale timezone handling is planned.
+
+This section only records the decision. No timezone logic, scheduling, or runtime configuration has been implemented yet — that belongs to the tasks that actually need it (e.g. the Logging task, and the later GitHub Actions automation task).
