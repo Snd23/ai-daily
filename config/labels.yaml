@@ -1,0 +1,41 @@
+# Editorial section labels, localized for `it` and `en`.
+#
+# Structure: {language: {internal_key: displayed_label}} (see
+# docs/ARCHITECTURE.md §5.2). Keys are English, repository-language
+# identifiers (CLAUDE.md §43); values are editorial content in the
+# corresponding language.
+#
+# This is the approved list of the 13 top-level section labels from
+# docs/PRD.md §40. Sub-section labels (e.g. DEVELOPER IMPACT, the research
+# breakdown headers, the AI SENZA SBATTI template headers) are not yet
+# finalized and are out of scope until a task defines them.
+
+it:
+  top_stories: "TOP STORIES"
+  models_llm: "MODELLI & LLM"
+  big_tech_business: "BIG TECH & BUSINESS"
+  ai_research: "AI RESEARCH"
+  ai_developers: "AI PER DEVELOPER"
+  robotics: "ROBOTICA"
+  regulation: "AI & REGOLAMENTAZIONE"
+  society: "AI & SOCIETÀ"
+  hardware: "AI HARDWARE"
+  startups: "STARTUP"
+  ai_senza_sbatti: "AI SENZA SBATTI"
+  termine_del_giorno: "TERMINE DEL GIORNO"
+  what_to_watch: "WHAT TO WATCH"
+
+en:
+  top_stories: "TOP STORIES"
+  models_llm: "MODELS & LLMs"
+  big_tech_business: "BIG TECH & BUSINESS"
+  ai_research: "AI RESEARCH"
+  ai_developers: "AI FOR DEVELOPERS"
+  robotics: "ROBOTICS"
+  regulation: "AI & REGULATION"
+  society: "AI & SOCIETY"
+  hardware: "AI HARDWARE"
+  startups: "STARTUPS"
+  ai_senza_sbatti: "AI MADE SIMPLE"
+  termine_del_giorno: "TERM OF THE DAY"
+  what_to_watch: "WHAT TO WATCH"

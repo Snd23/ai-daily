@@ -5,13 +5,19 @@ description = "Automated AI News Intelligence & Learning Platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-dependencies = []
+dependencies = [
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    "types-PyYAML>=6.0",
 ]
 
 [build-system]
