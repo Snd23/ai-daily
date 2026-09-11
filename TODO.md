@@ -5,11 +5,11 @@
 - [x] TASK-001 — Initialize the Python project
 - [x] TASK-002 — Application configuration
 - [x] TASK-003 — Logging
-- [ ] TASK-004 — Initial database model
+- [x] TASK-004 — Initial database model
 
 ## Milestone 2 — News Collection
 
-- [ ] TASK-005 — Source model
+- [x] TASK-005 — Source model
 - [ ] TASK-006 — sources.yaml
 - [ ] TASK-007 — RSS collector
 - [ ] TASK-008 — Article normalization
