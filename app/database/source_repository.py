@@ -14,11 +14,19 @@ Deleting a `source` is intentionally not supported: `article.source_id`
 references `source.id` with foreign keys enforced, and no requirement
 documents a need to hard-delete a source. `deactivate` (`is_active = 0`) is
 the documented mechanism for retiring a source without losing history.
+
+Each write method commits immediately by default (`commit=True`), matching
+TASK-005's original single-operation behavior. Passing `commit=False`
+inside a `transaction()` block instead lets several writes share one
+atomic transaction — added for TASK-006's `sync_sources`, which must apply
+several creates/updates/deactivations as a single all-or-nothing operation.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from app.database.source import Source, decode_categories, encode_categories
@@ -43,11 +51,33 @@ class SourceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
-    def create(self, source: Source) -> Source:
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Run several writes as a single atomic transaction.
+
+        Call `create`/`update`/`deactivate` with `commit=False` for every
+        write inside this block: none of them takes effect individually,
+        and the whole set is committed only if the block completes without
+        raising, or rolled back entirely if it raises. Used by
+        `app.config.sources.sync_sources` so a multi-source reconciliation
+        is all-or-nothing.
+        """
+        try:
+            yield
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+
+    def create(self, source: Source, *, commit: bool = True) -> Source:
         """Insert `source` and return it with its assigned `id`.
 
         `source.id` is ignored (the column is `AUTOINCREMENT`); pass an
         already-persisted `Source` and this still inserts a new row.
+
+        `commit=False` leaves the write pending on the connection's current
+        transaction instead of committing it immediately — for use inside
+        a `transaction()` block only.
         """
         cursor = self._connection.execute(
             """
@@ -69,7 +99,8 @@ class SourceRepository:
                 "last_fetched_at": source.last_fetched_at,
             },
         )
-        self._connection.commit()
+        if commit:
+            self._connection.commit()
         assert cursor.lastrowid is not None
         return source.model_copy(update={"id": cursor.lastrowid})
 
@@ -105,8 +136,11 @@ class SourceRepository:
         ).fetchall()
         return [_from_row(row) for row in rows]
 
-    def update(self, source: Source) -> None:
+    def update(self, source: Source, *, commit: bool = True) -> None:
         """Persist every mutable field of `source` (matched by `source.id`).
+
+        `commit=False` leaves the write pending — for use inside a
+        `transaction()` block only.
 
         Raises:
             ValueError: if `source.id` is `None`, or no row has that `id`.
@@ -139,12 +173,16 @@ class SourceRepository:
                 "last_fetched_at": source.last_fetched_at,
             },
         )
-        self._connection.commit()
+        if commit:
+            self._connection.commit()
         if cursor.rowcount == 0:
             raise ValueError(f"No source found with id={source.id}")
 
-    def deactivate(self, source_id: int) -> None:
+    def deactivate(self, source_id: int, *, commit: bool = True) -> None:
         """Set `is_active = False` for the source with `source_id`.
+
+        `commit=False` leaves the write pending — for use inside a
+        `transaction()` block only.
 
         Raises:
             ValueError: if no row has that `id`.
@@ -152,7 +190,8 @@ class SourceRepository:
         cursor = self._connection.execute(
             "UPDATE source SET is_active = 0 WHERE id = ?", (source_id,)
         )
-        self._connection.commit()
+        if commit:
+            self._connection.commit()
         if cursor.rowcount == 0:
             raise ValueError(f"No source found with id={source_id}")
 

@@ -1,0 +1,190 @@
+# Configured news sources for AI Daily (TASK-006).
+#
+# Structure: {sources: [entry, ...]}, one entry per app.database.source.Source
+# (docs/PRD.md §6, docs/ARCHITECTURE.md §3). Every field below is required —
+# `Source` defines no defaults, so none are assumed here either.
+#
+# reliability_weight is a plain, hand-entered configuration value in this
+# task (0.0-1.0, roughly aligned with `tier` below). No algorithm computes
+# it: the actual semantics and scoring logic belong to the future Source
+# reliability task. Treat these numbers as an initial, revisable curation,
+# not a computed result.
+#
+# Every URL below was checked (September 2026) to be a real, currently
+# reachable feed or official page — either fetched directly and confirmed
+# to be a working RSS/Atom feed, or, where direct fetching was blocked by
+# anti-bot protection (BBC, The Guardian, The Verge, Ars Technica, Wired,
+# Reddit), cross-confirmed as the canonical, actively-used feed URL via
+# multiple independent, unrelated sources (feed-reader directories, RSS
+# aggregator services, and/or open-source tools that consume that exact
+# URL). No RSS/API endpoint was guessed or invented.
+#
+# `type: html` is used only where the organization does not publish an RSS
+# feed at all (confirmed by search): the URL then points at a real,
+# verified official page (docs/ARCHITECTURE.md §2's HtmlCollector), not a
+# feed.
+#
+# categories are free-form source tags (docs/PRD.md §6 example), unrelated
+# to the `category` table's fixed slugs used to classify Event rows.
+
+sources:
+  # --- Tier 1: primary/official sources -------------------------------
+
+  - name: OpenAI
+    type: rss
+    url: https://openai.com/news/rss.xml
+    tier: 1
+    categories:
+      - models
+      - business
+      - research
+    reliability_weight: 1.0
+    is_active: true
+
+  - name: Google DeepMind
+    type: rss
+    url: https://deepmind.google/blog/feed/basic/
+    tier: 1
+    categories:
+      - models
+      - research
+    reliability_weight: 1.0
+    is_active: true
+
+  - name: Microsoft Research
+    type: rss
+    url: https://www.microsoft.com/en-us/research/feed/
+    tier: 1
+    categories:
+      - research
+      - business
+      - models
+    reliability_weight: 1.0
+    is_active: true
+
+  - name: NVIDIA
+    type: rss
+    url: https://blogs.nvidia.com/feed/
+    tier: 1
+    categories:
+      - hardware
+      - models
+      - business
+    reliability_weight: 1.0
+    is_active: true
+
+  - name: Hugging Face
+    type: rss
+    url: https://huggingface.co/blog/feed.xml
+    tier: 1
+    categories:
+      - models
+      - developer
+      - research
+    reliability_weight: 1.0
+    is_active: true
+
+  - name: Anthropic
+    type: html
+    url: https://www.anthropic.com/news
+    tier: 1
+    categories:
+      - models
+      - business
+      - research
+    reliability_weight: 1.0
+    is_active: true
+
+  # --- Tier 2: agencies and authoritative outlets ---------------------
+
+  - name: BBC News - Technology
+    type: rss
+    url: http://feeds.bbci.co.uk/news/technology/rss.xml
+    tier: 2
+    categories:
+      - business
+      - regulation
+      - society
+    reliability_weight: 0.9
+    is_active: true
+
+  - name: The Guardian - Artificial Intelligence
+    type: rss
+    url: https://www.theguardian.com/technology/artificialintelligenceai/rss
+    tier: 2
+    categories:
+      - regulation
+      - society
+      - business
+    reliability_weight: 0.9
+    is_active: true
+
+  # --- Tier 3: specialized tech outlets --------------------------------
+
+  - name: TechCrunch
+    type: rss
+    url: https://techcrunch.com/feed/
+    tier: 3
+    categories:
+      - business
+      - startups
+      - models
+    reliability_weight: 0.7
+    is_active: true
+
+  - name: The Verge
+    type: rss
+    url: https://www.theverge.com/rss/index.xml
+    tier: 3
+    categories:
+      - business
+      - society
+      - hardware
+    reliability_weight: 0.7
+    is_active: true
+
+  - name: Ars Technica
+    type: rss
+    url: https://feeds.arstechnica.com/arstechnica/index
+    tier: 3
+    categories:
+      - hardware
+      - research
+      - society
+    reliability_weight: 0.7
+    is_active: true
+
+  - name: MIT Technology Review
+    type: rss
+    url: https://www.technologyreview.com/feed/
+    tier: 3
+    categories:
+      - research
+      - society
+      - regulation
+    reliability_weight: 0.7
+    is_active: true
+
+  - name: Wired - AI
+    type: rss
+    url: https://www.wired.com/feed/tag/ai/latest/rss
+    tier: 3
+    categories:
+      - society
+      - research
+      - business
+    reliability_weight: 0.7
+    is_active: true
+
+  # --- Tier 4: community / social ---------------------------------------
+
+  - name: Reddit - r/MachineLearning
+    type: rss
+    url: https://www.reddit.com/r/MachineLearning/.rss
+    tier: 4
+    categories:
+      - community
+      - research
+      - models
+    reliability_weight: 0.3
+    is_active: true
