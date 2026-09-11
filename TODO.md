@@ -4,7 +4,7 @@
 
 - [x] TASK-001 — Initialize the Python project
 - [x] TASK-002 — Application configuration
-- [ ] TASK-003 — Logging
+- [x] TASK-003 — Logging
 - [ ] TASK-004 — Initial database model
 
 ## Milestone 2 — News Collection
