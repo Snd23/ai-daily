@@ -1,4 +1,4 @@
-"""SQLite repository for the `article` table (TASK-007).
+"""SQLite repository for the `article` table (TASK-007, extended TASK-008).
 
 Plain stdlib `sqlite3`, no ORM (docs/ARCHITECTURE.md §1.2), following the
 same pattern as `SourceRepository` (TASK-005). Translates between `Article`
@@ -6,17 +6,20 @@ model instances and rows of the `article` table (TASK-004, widened by
 TASK-007's `0002_article_published_at_nullable.sql`); the schema itself is
 not modified here.
 
-Only the two operations `RssCollector` actually needs are provided:
-`create` and `get_by_url` (TASK-007 spec §7). Deciding what to do about an
-already-known `url` — skip it rather than erroring or overwriting it
-(TASK-007 spec §11) — is the collector's responsibility, not this
-repository's: it calls `get_by_url` before `create`, mirroring how
-`SourceRepository` already leaves url-uniqueness policy to its caller
-(TASK-005).
+TASK-007 needs `create` and `get_by_url` (TASK-007 spec §7). TASK-008 adds
+`list_pending` and `update_normalization` (TASK-008 spec §8) -- the minimum
+needed to select pending articles and write back normalization results
+without ever touching `status`, `published_at`, `event_id`, `raw_excerpt`,
+`title`, `url`, `source_id` or `fetched_at`.
 
-`status` is intentionally left out of the INSERT column list so the
-database's own `DEFAULT 'pending'` applies (TASK-007 spec §8) instead of
-duplicating that value here.
+`status` is intentionally left out of the `create` INSERT column list so
+the database's own `DEFAULT 'pending'` applies (TASK-007 spec §8) instead
+of duplicating that value here. `update_normalization` deliberately writes
+only `normalized_text`/`content_hash`/`language`, unlike `SourceRepository.
+update` which overwrites every mutable field of a `Source` -- a narrower
+UPDATE column list makes it structurally impossible for this method to
+touch any other column (TASK-008 spec §8), rather than relying on callers
+not to pass a modified value for them.
 """
 
 from __future__ import annotations
@@ -86,6 +89,55 @@ class ArticleRepository:
             f"SELECT {_SELECT_COLUMNS} FROM article WHERE url = ?", (url,)
         ).fetchone()
         return _from_row(row) if row is not None else None
+
+    def list_pending(self) -> list[Article]:
+        """Return every `Article` with `status = 'pending'`, ordered by `id`.
+
+        This is the selection TASK-008's normalization stage operates on
+        (TASK-008 spec §7); mirrors `SourceRepository.list_active`'s
+        naming and shape.
+        """
+        rows = self._connection.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM article WHERE status = 'pending' ORDER BY id"
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
+    def update_normalization(
+        self,
+        article_id: int,
+        *,
+        normalized_text: str,
+        content_hash: str,
+        language: str | None,
+    ) -> None:
+        """Persist the normalization result for the article with `article_id`.
+
+        Writes *only* `normalized_text`, `content_hash` and `language`;
+        every other column (`status` included) is left exactly as it was
+        (TASK-008 spec §8). `language=None` is stored as SQL `NULL` -- a
+        legitimate result (TASK-008 spec §7), not an error.
+
+        Raises:
+            ValueError: if no row has `article_id`.
+        """
+        cursor = self._connection.execute(
+            """
+            UPDATE article
+            SET normalized_text = :normalized_text,
+                content_hash = :content_hash,
+                language = :language
+            WHERE id = :id
+            """,
+            {
+                "id": article_id,
+                "normalized_text": normalized_text,
+                "content_hash": content_hash,
+                "language": language,
+            },
+        )
+        self._connection.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"No article found with id={article_id}")
 
 
 def _from_row(row: Any) -> Article:

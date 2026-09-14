@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
     "feedparser>=6.0",
+    "langdetect>=1.0",
     "pydantic>=2.9",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
@@ -47,6 +48,13 @@ packages = ["app"]
 # (checked for TASK-007); every other dependency here has real types.
 [[tool.mypy.overrides]]
 module = "feedparser"
+ignore_missing_imports = true
+
+# langdetect ships no py.typed marker and no stubs package exists on PyPI
+# (checked for TASK-008); the wildcard also covers its submodules
+# (e.g. langdetect.lang_detect_exception).
+[[tool.mypy.overrides]]
+module = "langdetect.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
