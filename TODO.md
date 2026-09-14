@@ -12,7 +12,7 @@
 - [x] TASK-005 — Source model
 - [ ] TASK-006 — sources.yaml
 - [ ] TASK-007 — RSS collector
-- [ ] TASK-008 — Article normalization
+- [x] TASK-008 — Article normalization
 
 ## Milestone 3 — News Intelligence
 
