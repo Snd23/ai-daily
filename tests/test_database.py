@@ -141,6 +141,8 @@ def test_schema_migrations_records_applied_migration(
 ) -> None:
     rows = migrated_connection.execute("SELECT filename FROM schema_migrations").fetchall()
     assert ("0001_initial_schema.sql",) in rows
+    assert ("0002_article_published_at_nullable.sql",) in rows
+    assert ("0003_article_duplicate_of.sql",) in rows
 
 
 def test_running_migrations_twice_is_idempotent(migrated_connection: sqlite3.Connection) -> None:
@@ -212,6 +214,24 @@ def test_foreign_keys_are_enforced(migrated_connection: sqlite3.Connection) -> N
             VALUES (999, 'Title', 'https://example.com/a', :ts, :ts, 'excerpt')
             """,
             {"ts": _TIMESTAMP},
+        )
+
+
+def test_article_duplicate_of_foreign_key_is_enforced(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    # duplicate_of (TASK-009, 0003_article_duplicate_of.sql) references
+    # article.id itself; a value that does not match any row must be
+    # rejected the same way any other foreign key is.
+    source_id = _insert_source(migrated_connection)
+    with pytest.raises(sqlite3.IntegrityError):
+        migrated_connection.execute(
+            """
+            INSERT INTO article
+                (source_id, title, url, published_at, fetched_at, raw_excerpt, duplicate_of)
+            VALUES (?, 'Title', 'https://example.com/dup-fk', ?, ?, 'excerpt', 999)
+            """,
+            (source_id, _TIMESTAMP, _TIMESTAMP),
         )
 
 
@@ -358,10 +378,11 @@ def test_article_nullable_fields_accept_null(migrated_connection: sqlite3.Connec
     )
 
     row = migrated_connection.execute(
-        "SELECT event_id, normalized_text, content_hash, language FROM article WHERE url = ?",
+        "SELECT event_id, normalized_text, content_hash, language, duplicate_of "
+        "FROM article WHERE url = ?",
         ("https://example.com/nullable",),
     ).fetchone()
-    assert row == (None, None, None, None)
+    assert row == (None, None, None, None, None)
 
 
 def test_edition_nullable_fields_accept_null(migrated_connection: sqlite3.Connection) -> None:

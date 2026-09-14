@@ -1,4 +1,4 @@
-"""Tests for `ArticleRepository` (TASK-007; extended TASK-008).
+"""Tests for `ArticleRepository` (TASK-007; extended TASK-008, TASK-009).
 
 Exercises the repository against a real, migrated in-memory SQLite
 database (same fixture pattern as `tests/test_source_repository.py`).
@@ -277,3 +277,425 @@ def test_update_normalization_raises_for_nonexistent_article(
         repository.update_normalization(
             999_999, normalized_text="x", content_hash="y", language=None
         )
+
+
+def test_update_normalization_does_not_modify_duplicate_of(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type, list-item]
+
+    repository.update_normalization(
+        duplicate.id,  # type: ignore[arg-type]
+        normalized_text="clean text",
+        content_hash="abc123",
+        language="en",
+    )
+
+    fetched = repository.get_by_url(duplicate.url)
+    assert fetched is not None
+    assert fetched.duplicate_of == canonical.id
+    assert fetched.status == "discarded"
+
+
+# --- duplicate_of / create (TASK-009 spec §5, §6) --------------------------
+
+
+def test_create_leaves_duplicate_of_null(repository: ArticleRepository, source_id: int) -> None:
+    created = repository.create(_make_article(source_id=source_id))
+
+    assert created.duplicate_of is None
+    fetched = repository.get_by_url(created.url)
+    assert fetched is not None
+    assert fetched.duplicate_of is None
+
+
+# --- list_deduplication_candidates (TASK-009 spec §4, §8) -------------------
+
+
+def _normalize(
+    repository: ArticleRepository,
+    article_id: int,
+    *,
+    content_hash: str,
+    normalized_text: str = "normalized text",
+) -> None:
+    repository.update_normalization(
+        article_id, normalized_text=normalized_text, content_hash=content_hash, language="en"
+    )
+
+
+def test_list_deduplication_candidates_groups_by_content_hash(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    first = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    second = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _normalize(repository, first.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _normalize(repository, second.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    result = repository.list_deduplication_candidates()
+
+    assert [article.id for article in result] == [first.id, second.id]
+
+
+def test_list_deduplication_candidates_excludes_hash_shared_by_only_one_article(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    only = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    _normalize(repository, only.id, content_hash="unique-hash")  # type: ignore[arg-type]
+
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_excludes_null_content_hash(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    # Two never-normalized articles: content_hash is NULL for both, but SQL
+    # NULL is never equal to NULL, so they must never be grouped together.
+    repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_excludes_empty_content_hash(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    first = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    second = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _normalize(repository, first.id, content_hash="")  # type: ignore[arg-type]
+    _normalize(repository, second.id, content_hash="")  # type: ignore[arg-type]
+
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_excludes_null_normalized_text(
+    repository: ArticleRepository, connection: sqlite3.Connection, source_id: int
+) -> None:
+    # normalized_text NULL with a non-NULL content_hash cannot happen through
+    # update_normalization (both are always written together), but the
+    # schema itself allows it -- the filter must exclude it defensively.
+    first = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    second = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    connection.execute(
+        "UPDATE article SET content_hash = 'hash-1' WHERE id IN (?, ?)", (first.id, second.id)
+    )
+    connection.commit()
+
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_excludes_empty_normalized_text(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    first = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    second = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _normalize(repository, first.id, content_hash="hash-1", normalized_text="")  # type: ignore[arg-type]
+    _normalize(repository, second.id, content_hash="hash-1", normalized_text="")  # type: ignore[arg-type]
+
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_excludes_non_pending_status(
+    repository: ArticleRepository, connection: sqlite3.Connection, source_id: int
+) -> None:
+    first = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    second = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _normalize(repository, first.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _normalize(repository, second.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _set_status(connection, second.id, "processed")  # type: ignore[arg-type]
+
+    # Only one 'pending' article remains for that hash, so the group no
+    # longer has 2+ pending members and is excluded entirely.
+    assert repository.list_deduplication_candidates() == []
+
+
+def test_list_deduplication_candidates_orders_by_hash_then_id(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    a = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    b = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    c = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    d = repository.create(_make_article(source_id=source_id, url="https://example.com/d"))
+    _normalize(repository, d.id, content_hash="hash-b")  # type: ignore[arg-type]
+    _normalize(repository, c.id, content_hash="hash-b")  # type: ignore[arg-type]
+    _normalize(repository, b.id, content_hash="hash-a")  # type: ignore[arg-type]
+    _normalize(repository, a.id, content_hash="hash-a")  # type: ignore[arg-type]
+
+    result = repository.list_deduplication_candidates()
+
+    assert [article.id for article in result] == [a.id, b.id, c.id, d.id]
+
+
+# --- mark_duplicates (TASK-009 spec §5, §9) ---------------------------------
+
+
+def test_mark_duplicates_discards_duplicates_and_sets_duplicate_of(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    dup1 = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    dup2 = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+
+    repository.mark_duplicates(canonical.id, [dup1.id, dup2.id])  # type: ignore[arg-type, list-item]
+
+    fetched1 = repository.get_by_url(dup1.url)
+    fetched2 = repository.get_by_url(dup2.url)
+    assert fetched1 is not None
+    assert fetched1.status == "discarded"
+    assert fetched1.duplicate_of == canonical.id
+    assert fetched2 is not None
+    assert fetched2.status == "discarded"
+    assert fetched2.duplicate_of == canonical.id
+
+
+def test_mark_duplicates_leaves_canonical_untouched(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type, list-item]
+
+    fetched = repository.get_by_url(canonical.url)
+    assert fetched is not None
+    assert fetched.status == "pending"
+    assert fetched.duplicate_of is None
+
+
+def test_mark_duplicates_does_not_modify_other_columns(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(
+        _make_article(
+            source_id=source_id,
+            url="https://example.com/b",
+            title="Duplicate Title",
+            raw_excerpt="Duplicate raw excerpt",
+        )
+    )
+    repository.update_normalization(
+        duplicate.id,  # type: ignore[arg-type]
+        normalized_text="dup text",
+        content_hash="hash-1",
+        language="en",
+    )
+    before = repository.get_by_url(duplicate.url)
+    assert before is not None
+
+    repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type, list-item]
+
+    after = repository.get_by_url(duplicate.url)
+    assert after is not None
+    assert after.title == before.title
+    assert after.url == before.url
+    assert after.raw_excerpt == before.raw_excerpt
+    assert after.published_at == before.published_at
+    assert after.fetched_at == before.fetched_at
+    assert after.source_id == before.source_id
+    assert after.event_id == before.event_id
+    assert after.normalized_text == before.normalized_text
+    assert after.content_hash == before.content_hash
+    assert after.language == before.language
+
+
+def test_mark_duplicates_is_atomic_when_a_duplicate_id_does_not_exist(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    with pytest.raises(ValueError, match="Expected to mark"):
+        repository.mark_duplicates(canonical.id, [duplicate.id, 999_999])  # type: ignore[arg-type, list-item]
+
+    # Rollback: `duplicate` must NOT have been marked, even though it alone
+    # matched the UPDATE's WHERE clause before the row-count check failed.
+    fetched_duplicate = repository.get_by_url(duplicate.url)
+    fetched_canonical = repository.get_by_url(canonical.url)
+    assert fetched_duplicate is not None
+    assert fetched_duplicate.status == "pending"
+    assert fetched_duplicate.duplicate_of is None
+    assert fetched_canonical is not None
+    assert fetched_canonical.status == "pending"
+
+
+def test_mark_duplicates_raises_for_nonexistent_canonical(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    with pytest.raises(ValueError, match="No article found"):
+        repository.mark_duplicates(999_999, [duplicate.id])  # type: ignore[list-item]
+
+    fetched = repository.get_by_url(duplicate.url)
+    assert fetched is not None
+    assert fetched.status == "pending"
+
+
+def test_mark_duplicates_raises_when_canonical_is_not_pending(
+    repository: ArticleRepository, connection: sqlite3.Connection, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _set_status(connection, canonical.id, "processed")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="not eligible as canonical"):
+        repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type, list-item]
+
+
+def test_mark_duplicates_raises_when_canonical_is_already_a_duplicate(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    a = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    b = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    c = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    repository.mark_duplicates(a.id, [b.id])  # type: ignore[arg-type, list-item]
+
+    with pytest.raises(ValueError, match="not eligible as canonical"):
+        repository.mark_duplicates(b.id, [c.id])  # type: ignore[arg-type, list-item]
+
+
+def test_mark_duplicates_raises_for_empty_duplicate_ids(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id))
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        repository.mark_duplicates(canonical.id, [])  # type: ignore[arg-type]
+
+
+def test_mark_duplicates_raises_when_canonical_is_in_duplicate_ids(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    with pytest.raises(ValueError, match="must not contain canonical_id"):
+        repository.mark_duplicates(canonical.id, [duplicate.id, canonical.id])  # type: ignore[arg-type, list-item]
+
+
+def test_mark_duplicates_raises_for_repeated_duplicate_ids(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+
+    with pytest.raises(ValueError, match="repeated ids"):
+        repository.mark_duplicates(canonical.id, [duplicate.id, duplicate.id])  # type: ignore[arg-type, list-item]
+
+
+# --- list_pending_matches_for_established_canonicals (TASK-009 spec, A8) ---
+
+
+def _establish_canonical(
+    repository: ArticleRepository, *, canonical: Article, duplicate: Article, content_hash: str
+) -> None:
+    # Shared setup: normalize both articles to the same hash and mark the
+    # duplicate, so `duplicate` becomes an already-established canonical's
+    # follower for `content_hash` -- exactly the state
+    # `list_pending_matches_for_established_canonicals` looks for.
+    _normalize(repository, canonical.id, content_hash=content_hash)  # type: ignore[arg-type]
+    _normalize(repository, duplicate.id, content_hash=content_hash)  # type: ignore[arg-type]
+    repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type, list-item]
+
+
+def test_list_pending_matches_for_established_canonicals_empty_when_nothing_marked(
+    repository: ArticleRepository,
+) -> None:
+    assert repository.list_pending_matches_for_established_canonicals() == {}
+
+
+def test_list_pending_matches_for_established_canonicals_finds_new_pending_with_same_hash(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    old_duplicate = repository.create(
+        _make_article(source_id=source_id, url="https://example.com/b")
+    )
+    _establish_canonical(
+        repository, canonical=canonical, duplicate=old_duplicate, content_hash="hash-1"
+    )
+
+    new_pending = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    _normalize(repository, new_pending.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    matches = repository.list_pending_matches_for_established_canonicals()
+
+    assert matches == {canonical.id: [new_pending.id]}
+
+
+def test_list_pending_matches_for_established_canonicals_excludes_the_canonical_itself(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://example.com/b"))
+    _establish_canonical(
+        repository, canonical=canonical, duplicate=duplicate, content_hash="hash-1"
+    )
+
+    # The canonical is still 'pending' and trivially shares its own hash --
+    # it must never be reported as a match of itself.
+    assert repository.list_pending_matches_for_established_canonicals() == {}
+
+
+def test_list_pending_matches_for_established_canonicals_groups_multiple_new_pending(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    old_duplicate = repository.create(
+        _make_article(source_id=source_id, url="https://example.com/b")
+    )
+    _establish_canonical(
+        repository, canonical=canonical, duplicate=old_duplicate, content_hash="hash-1"
+    )
+
+    first_new = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    second_new = repository.create(_make_article(source_id=source_id, url="https://example.com/d"))
+    _normalize(repository, second_new.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _normalize(repository, first_new.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    matches = repository.list_pending_matches_for_established_canonicals()
+
+    assert matches == {canonical.id: [first_new.id, second_new.id]}
+
+
+def test_list_pending_matches_for_established_canonicals_ignores_non_pending_articles(
+    repository: ArticleRepository, connection: sqlite3.Connection, source_id: int
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    old_duplicate = repository.create(
+        _make_article(source_id=source_id, url="https://example.com/b")
+    )
+    _establish_canonical(
+        repository, canonical=canonical, duplicate=old_duplicate, content_hash="hash-1"
+    )
+
+    processed = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    _normalize(repository, processed.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _set_status(connection, processed.id, "processed")  # type: ignore[arg-type]
+
+    assert repository.list_pending_matches_for_established_canonicals() == {}
+
+
+def test_list_pending_matches_for_established_canonicals_requires_matching_hash(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    # A pending article must never be attached to an unrelated established
+    # canonical just because *some* duplicate_of exists elsewhere in the
+    # table -- only a matching content_hash makes it eligible (TASK-009
+    # spec, A8 revision: "non fare affidamento soltanto sull'esistenza di
+    # un duplicate_of senza verificare la corrispondenza dell'hash").
+    canonical = repository.create(_make_article(source_id=source_id, url="https://example.com/a"))
+    old_duplicate = repository.create(
+        _make_article(source_id=source_id, url="https://example.com/b")
+    )
+    _establish_canonical(
+        repository, canonical=canonical, duplicate=old_duplicate, content_hash="hash-1"
+    )
+
+    unrelated = repository.create(_make_article(source_id=source_id, url="https://example.com/c"))
+    _normalize(repository, unrelated.id, content_hash="hash-2")  # type: ignore[arg-type]
+
+    assert repository.list_pending_matches_for_established_canonicals() == {}
