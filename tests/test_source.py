@@ -49,6 +49,40 @@ def test_source_rejects_invalid_tier(invalid_tier: int) -> None:
         _make_source(tier=invalid_tier)
 
 
+# --- reliability_weight (TASK-010) -----------------------------------------
+
+
+@pytest.mark.parametrize("valid_weight", [0.0, 1.0, 0.5])
+def test_source_accepts_reliability_weight_within_range(valid_weight: float) -> None:
+    source = _make_source(reliability_weight=valid_weight)
+    assert source.reliability_weight == valid_weight
+
+
+@pytest.mark.parametrize("invalid_weight", [-0.01, 1.01])
+def test_source_rejects_reliability_weight_out_of_range(invalid_weight: float) -> None:
+    with pytest.raises(ValidationError):
+        _make_source(reliability_weight=invalid_weight)
+
+
+def test_source_rejects_non_numeric_reliability_weight() -> None:
+    with pytest.raises(ValidationError):
+        _make_source(reliability_weight="high")
+
+
+def test_source_rejects_missing_reliability_weight() -> None:
+    values = {
+        "name": "OpenAI",
+        "type": "rss",
+        "url": "https://openai.com/blog/rss",
+        "tier": 1,
+        "categories": ["models", "business"],
+        "is_active": True,
+        "last_fetched_at": None,
+    }
+    with pytest.raises(ValidationError):
+        Source(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_source_rejects_blank_name(blank: str) -> None:
     with pytest.raises(ValidationError):

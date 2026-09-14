@@ -204,6 +204,62 @@ def test_invalid_tier_raises(tmp_path: Path) -> None:
         load_sources_config(path)
 
 
+def test_reliability_weight_out_of_range_raises(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+        sources:
+          - name: Example
+            type: rss
+            url: https://example.com/feed
+            tier: 1
+            categories: []
+            reliability_weight: 1.01
+            is_active: true
+        """,
+    )
+
+    with pytest.raises(ConfigurationError, match="Invalid source entry 0"):
+        load_sources_config(path)
+
+
+def test_reliability_weight_missing_raises(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+        sources:
+          - name: Example
+            type: rss
+            url: https://example.com/feed
+            tier: 1
+            categories: []
+            is_active: true
+        """,
+    )
+
+    with pytest.raises(ConfigurationError, match="Invalid source entry 0"):
+        load_sources_config(path)
+
+
+def test_reliability_weight_non_numeric_raises(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+        sources:
+          - name: Example
+            type: rss
+            url: https://example.com/feed
+            tier: 1
+            categories: []
+            reliability_weight: "high"
+            is_active: true
+        """,
+    )
+
+    with pytest.raises(ConfigurationError, match="Invalid source entry 0"):
+        load_sources_config(path)
+
+
 def test_invalid_categories_shape_raises(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

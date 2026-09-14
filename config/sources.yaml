@@ -4,11 +4,14 @@
 # (docs/PRD.md §6, docs/ARCHITECTURE.md §3). Every field below is required —
 # `Source` defines no defaults, so none are assumed here either.
 #
-# reliability_weight is a plain, hand-entered configuration value in this
-# task (0.0-1.0, roughly aligned with `tier` below). No algorithm computes
-# it: the actual semantics and scoring logic belong to the future Source
-# reliability task. Treat these numbers as an initial, revisable curation,
-# not a computed result.
+# reliability_weight is a plain, hand-entered configuration value, formally
+# constrained to 0.0-1.0 inclusive (TASK-010; enforced by `Source`'s own
+# pydantic validation). It is required for every source, has no default and
+# is never derived from `tier` -- roughly aligned with it below, but a
+# distinct concept (CLAUDE.md §13 vs. §14/docs/PRD.md §4). No algorithm
+# computes it: the scoring logic that will consume it belongs to a later
+# task. Treat these numbers as an initial, revisable curation, not a
+# computed result.
 #
 # Every URL below was checked (September 2026) to be a real, currently
 # reachable feed or official page — either fetched directly and confirmed
