@@ -76,6 +76,27 @@ def test_get_by_url_returns_none_when_not_found(repository: SourceRepository) ->
     assert repository.get_by_url("https://example.com/missing") is None
 
 
+# --- reliability_weight round-trip (TASK-010) -------------------------------
+#
+# Persistence only: reliability_weight has no database CHECK (deliberately
+# rejected -- adding one would require rebuilding both `source` and
+# `article` due to the live foreign key between them). Range/type validation
+# is covered entirely by Source's own pydantic Field (tests/test_source.py);
+# these tests only confirm the column round-trips real values correctly.
+
+
+@pytest.mark.parametrize("weight", [0.0, 1.0, 0.42])
+def test_reliability_weight_round_trips_through_create(
+    repository: SourceRepository, weight: float
+) -> None:
+    created = repository.create(_make_source(reliability_weight=weight))
+
+    fetched = repository.get_by_id(created.id)  # type: ignore[arg-type]
+
+    assert fetched is not None
+    assert fetched.reliability_weight == weight
+
+
 def test_categories_round_trip_through_real_sqlite(repository: SourceRepository) -> None:
     created = repository.create(_make_source(categories=["models", "business", "research"]))
 

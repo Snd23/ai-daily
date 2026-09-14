@@ -11,9 +11,15 @@ topics. It is a distinct concept from the `category` table (which
 classifies `Event` rows) and is not validated against it — the two
 vocabularies are not documented as related.
 
-No range or default is enforced on `reliability_weight`: its semantics and
-any bound are the responsibility of the later source-reliability task, not
-this one.
+`reliability_weight` is a manually curated numeric weight, distinct from
+`tier`: `tier` is the discrete 1-4 editorial category (CLAUDE.md §13,
+docs/PRD.md §3); `reliability_weight` is a continuous value meant for
+future weighted scoring (docs/PRD.md §4/CLAUDE.md §14's `source_reliability`
+concept). Its range (TASK-010) is `0.0`-`1.0` inclusive, matching the
+values already curated in `config/sources.yaml`: it is required, has no
+default and is never derived from `tier` -- a missing, out-of-range or
+non-numeric value fails validation rather than being silently corrected
+(CLAUDE.md §41).
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ class Source(BaseModel):
     url: str
     tier: int = Field(ge=1, le=4)
     categories: list[str]
-    reliability_weight: float
+    reliability_weight: float = Field(ge=0.0, le=1.0)
     is_active: bool
     last_fetched_at: str | None = None
 
