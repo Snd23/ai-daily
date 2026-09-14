@@ -93,7 +93,12 @@ Minimum entities from PRD §20, with the fields necessary to satisfy the verific
 `id, name, type(rss|api|html), url, tier(1-4), categories, reliability_weight, is_active, last_fetched_at`
 
 **Article**
-`id, source_id→Source, event_id→Event (nullable), title, url(unique), published_at, fetched_at, raw_excerpt, normalized_text, content_hash, language, status(pending|processed|discarded|error)`
+`id, source_id→Source, event_id→Event (nullable), title, url(unique), published_at (nullable), fetched_at, raw_excerpt, normalized_text, content_hash, language, status(pending|processed|discarded|error)`
+
+`Article.published_at` is nullable (widened from NOT NULL by TASK-007's
+`0002_article_published_at_nullable.sql`): a feed entry with no publication
+date must have that absence preserved, not an invented date (CLAUDE.md
+§17, §41).
 
 `Article.language` is the language **observed** in the original content (any language, automatically detected) — it is purely informational and **does not constrain** the edition's language (PRD §38: "the source's language does not automatically determine the edition's language").
 

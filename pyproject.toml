@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
+    "feedparser>=6.0",
     "pydantic>=2.9",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
+    "requests>=2.31",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
@@ -18,6 +20,8 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML>=6.0",
+    "responses>=0.25",
+    "types-requests>=2.31",
 ]
 
 [build-system]
@@ -38,6 +42,12 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 strict = true
 packages = ["app"]
+
+# feedparser ships no py.typed marker and no stubs package exists on PyPI
+# (checked for TASK-007); every other dependency here has real types.
+[[tool.mypy.overrides]]
+module = "feedparser"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
