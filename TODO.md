@@ -10,17 +10,17 @@
 ## Milestone 2 — News Collection
 
 - [x] TASK-005 — Source model
-- [ ] TASK-006 — sources.yaml
-- [ ] TASK-007 — RSS collector
+- [x] TASK-006 — sources.yaml
+- [x] TASK-007 — RSS collector
 - [x] TASK-008 — Article normalization
 
 ## Milestone 3 — News Intelligence
 
-- [ ] TASK-009 — Deduplication
-- [ ] TASK-010 — Source reliability
-- [ ] TASK-011 — Verification status
-- [ ] TASK-012 — Classification
-- [ ] TASK-013 — Importance ranking
+- [x] TASK-009 — Deduplication
+- [x] TASK-010 — Source reliability
+- [x] TASK-011 — Event persistence
+- [x] TASK-012 — Cluster events
+- [x] TASK-013 — Importance ranking
 
 ## Milestone 4 — AI
 
