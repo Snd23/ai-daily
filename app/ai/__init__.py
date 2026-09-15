@@ -1,11 +1,17 @@
-"""AI generation (TASK-015): SUMMARIZE.
+"""AI generation (TASK-015, TASK-016): SUMMARIZE, AI SENZA SBATTI.
 
-Generates the reader-facing title and summary of one event in one language
-from caller-prepared data, with one `LLMProvider.complete()` call. Pure,
-in-memory: never touches the database, never creates or updates an `Event`,
-never persists `EventContent` (approved TASK-015 scope, MODEL B).
+Generates reader-facing, caller-prepared content with `LLMProvider.complete()`
+calls. Pure, in-memory: never touches the database, never creates or updates
+an `Event`, `EventContent`, `Concept`, `ConceptTranslation` or `Edition`
+(approved TASK-015/TASK-016 scope, MODEL B).
 """
 
+from app.ai.concept_explainer import (
+    ConceptExplanation,
+    ConceptExplanationInput,
+    ConceptExplanationParseError,
+    explain_concept,
+)
 from app.ai.event_summarizer import (
     ArticleContext,
     EventSummary,
@@ -16,8 +22,12 @@ from app.ai.event_summarizer import (
 
 __all__ = [
     "ArticleContext",
+    "ConceptExplanation",
+    "ConceptExplanationInput",
+    "ConceptExplanationParseError",
     "EventSummary",
     "EventSummaryInput",
     "SummarizationParseError",
+    "explain_concept",
     "summarize_event",
 ]
