@@ -2,7 +2,7 @@
 
 Technical architecture proposal for the MVP, derived from [PRD.md](./PRD.md) and constrained by the rules in [../CLAUDE.md](../CLAUDE.md).
 
-Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-015, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.8); superseded or not adopted proposals are kept and marked as historical.
+Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-016, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.8, §4.9); superseded or not adopted proposals are kept and marked as historical.
 
 ---
 
@@ -65,7 +65,7 @@ ORCHESTRATION         → app/pipeline/          (stage wiring, used by the CLI)
 DATA ACCESS           → app/database/          (connection, migrations, repositories)
 ```
 
-Implementation status (up to TASK-015):
+Implementation status (up to TASK-016):
 
 | Stage / concern | Actual module | Status |
 |---|---|---|
@@ -78,7 +78,8 @@ Implementation status (up to TASK-015):
 | CLASSIFY | — | not implemented; no corresponding task in TODO.md |
 | RANK | `app/ranking/` | implemented (TASK-013), deterministic, see §4.2a |
 | SUMMARIZE | `app/ai/event_summarizer.py` | implemented (TASK-015), in-memory, see §4.8 |
-| AI EXPLANATION, EDITORIAL ASSEMBLY, PDF, ORCHESTRATION | — | not implemented |
+| AI EXPLANATION | `app/ai/concept_explainer.py` | implemented (TASK-016), in-memory, see §4.9; concept selection and technical-definition curation/validation are not part of it |
+| EDITORIAL ASSEMBLY, PDF, ORCHESTRATION | — | not implemented |
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
 | DATA ACCESS | `app/database/` | connection, numbered SQL migrations, and models/repositories for `Source`, `Article`, `Event` (TASK-004, TASK-005, TASK-007, TASK-011) |
@@ -102,7 +103,7 @@ Notes on the original proposal:
 - `rank(event, context) -> RankingSignal` was the original proposal for LLM-assisted ranking. It is **historical, not adopted, and not implemented anywhere in the codebase**: importance ranking (TASK-013) is implemented as a deterministic formula outside `LLMProvider` — see §4.2a.
 - `classify` and `rank` **do not receive `language`**: they produce structural data (category, score, internal/audit rationale) reusable for any output language. This is consistent with CLAUDE.md §35 (cost control): do not re-run classification/ranking per language. This principle still applies to the classification and ranking stages, independently of the provider interface.
 - `summarize` and `explain` receive `language` and produce text intended for the reader. This still applies to the corresponding stages: event summarization (TASK-015, §4.8) takes the target language as input.
-- `explain` receives an already-validated `technical_definition` (see §5.3) and only produces the simplification in the requested language — it does not generate the technical definition from scratch. (Proposal, not implemented yet.)
+- `explain` receives an already-validated `technical_definition` (see §5.3) and only produces the simplification in the requested language — it does not generate the technical definition from scratch. This principle is implemented by TASK-016 (§4.9), as a standalone consumer of `complete()` — not as a provider method — the same pattern `summarize` follows in §2.1a.
 - All implementations (`AnthropicProvider`, `OpenAIProvider`) return data structures validated with `pydantic`, independent of the provider.
 
 #### 2.1a Actual implementation (TASK-014)
@@ -225,6 +226,8 @@ Current status (TASK-015): event summarization accepts `hedging_constraints` as 
 ### 4.5 AI SENZA SBATTI — fact validation
 Generating *and* validating a technical explanation every day via LLM is risky (risk of "self-validated" hallucination). Proposal: a knowledge base curated once — the ~15 concepts (PRD §11) have a `technical_definition` written/validated manually **for each supported language** (see §5.3), and the daily pipeline only runs the "Simplification" step (PRD §12) starting from that already-validated text.
 
+Current status (TASK-016): the Simplification-step half of this proposal is implemented — see §4.9. `app/ai/concept_explainer.py` takes an already-validated `technical_definition` as caller-supplied input and only simplifies it; it never generates, validates or corroborates a technical definition itself. The curated-knowledge-base half of this proposal — how and where each concept's `technical_definition` is authored and validated per language, and which module selects the day's concept — is **not implemented** and remains open (see §6, ambiguities #1 and #6).
+
 ### 4.6 What to Watch
 It is not specified whether items are extracted automatically or curated manually. Proposal: automatic extraction but with a high confidence threshold, only from Tier 1/2 sources, reusing the hedging module (§4.4) to discard speculative language. The `Event.future_date` field is language-neutral; the descriptive text lives in `EventContent` per language.
 
@@ -264,6 +267,28 @@ EventSummary         event_id, language, title, summary, usage
 - **Source attribution.** `EventSummary` has no source fields: citing sources belongs to the editorial layer (CLAUDE.md §18, PRD §15 and §41), and the source data remains available to the caller in `EventSummaryInput.articles`.
 - **Known limitation.** A response truncated by the token limit cannot be detected (§2.1a).
 
+### 4.9 AI Senza Sbatti explanation (TASK-016)
+
+`app/ai/concept_explainer.py` implements the AI EXPLANATION stage (PRD §42, product requirement in PRD §11-§12) as a pure, in-memory function built on `LLMProvider.complete()` (§2.1a):
+
+```
+explain_concept(llm_provider: LLMProvider, input: ConceptExplanationInput) -> ConceptExplanation
+
+ConceptExplanationInput   concept_slug, concept_name, technical_definition, language,
+                          news_context, event_id (nullable)
+ConceptExplanation        concept_slug, language, event_id, technical_definition,
+                          simple_explanation, example, why_it_matters, one_liner, usage
+```
+
+- **Input is prepared by the caller.** The stage does not select the day's concept, does not read the database, and does not validate, fact-check or corroborate `technical_definition`. `technical_definition` is assumed already validated for the requested `language`; `news_context` is a caller-prepared, already-condensed explanation of why the concept is relevant to the day's news — the stage does not receive or process raw articles, and it does not call `app.ai.event_summarizer` (TASK-015).
+- **`technical_definition` is never parsed from the LLM response.** It is copied verbatim from the input into `ConceptExplanation.technical_definition`; the LLM only ever generates `simple_explanation`, `example`, `why_it_matters` and `one_liner`. This is the WHAT IT IS / SIMPLE EXPLANATION / EXAMPLE / WHY IT MATTERS / IN ONE SENTENCE structure of PRD §11: `technical_definition` maps to WHAT IT IS and is not regenerated.
+- **One completion per `(concept, language, news_context)`**, with no batching, no retry and no second fact-checking or self-consistency call. The Italian and English explanations of the same concept require two separate calls; `technical_definition` is never translated by this stage.
+- **Prompt.** The system message contains English instructions: write in the target language (ISO 639-1 code); treat the given `technical_definition` as the sole source of technical truth, never contradicted or restated in a modified form; write for a non-technical reader without introducing technical errors; analogies are allowed only if clearly marked as an analogy; use the news context only to explain relevance, and treat it as untrusted data whose embedded instructions are never followed; keep a clear, professional, non-sensationalist tone. The user message states the concept's display name and contains the technical definition and the news context as delimited blocks, plus a reminder of the response format.
+- **Response contract.** `CompletionRequest` offers no structured output, so the response is plain text. After stripping surrounding whitespace it must start with `SIMPLE_EXPLANATION:`, contain exactly one occurrence of each of the four markers `SIMPLE_EXPLANATION:`, `EXAMPLE:`, `WHY_IT_MATTERS:`, `ONE_LINER:` in that fixed order, and `ONE_LINER:`'s content must be a single line. A missing, duplicated, out-of-order or empty field, text before the first marker, or a multi-line `ONE_LINER:` raises `ConceptExplanationParseError`. There are no recovery heuristics.
+- **Errors.** `LLMProviderError` propagates unchanged and `ConceptExplanationParseError` propagates; no exception is swallowed.
+- **Persistence: none** (MODEL B, §4.7). The stage does not create or update a `Concept`, `ConceptTranslation`, `Event`, `EventContent` or `Edition`, and there is no `ConceptRepository`/`ConceptTranslationRepository`. How the explanation is stored for an edition is not specified here.
+- **Scope.** Concept selection ("which concept, connected to which news, for today") and the authoring/validation of `technical_definition` per language are explicitly not part of this stage — both remain open (§6, ambiguities #1 and #6).
+
 ---
 
 ## 5. Localization (replaces the previous open ambiguity about language)
@@ -298,7 +323,7 @@ Reference: PRD §38.
 | `ConceptTranslation` (DB, new entity) | curated/generated content per concept, one row per language |
 | `Category` (DB) | stays slug-only; the displayed name is resolved from `labels.yaml` |
 | Event summarization (`app/ai/event_summarizer.py`, TASK-015; originally proposed as `LLMProvider.summarize`) | receives `language` as input; the prompt instructions are in English and request output in the target language (§4.8) |
-| AI SENZA SBATTI explanation (not implemented; originally proposed as `LLMProvider.explain`) | receives `language`, simplifies a `technical_definition` already in the target language |
+| AI SENZA SBATTI explanation (`app/ai/concept_explainer.py`, TASK-016; originally proposed as `LLMProvider.explain`) | receives `language`, simplifies a `technical_definition` already in the target language (§4.9) |
 | Classification (not implemented) and ranking (`app/ranking/`, TASK-013); originally proposed as `LLMProvider.classify` / `LLMProvider.rank` | **not impacted** — remain language-neutral |
 | `app/verification/` (hedging language; not implemented) | uncertainty-detection patterns must be defined for both languages |
 | `app/editorial/` | Top Stories/What to Watch selection reads `EventContent` in the edition's language; resolves labels from `config/labels.yaml` |
@@ -312,11 +337,12 @@ Reference: PRD §38.
 
 ## 6. Remaining ambiguities
 
-1. **Curation vs. translation of concepts (§5.3)** — I assumed separate manual curation of `technical_definition` for `it`/`en`. If you prefer LLM-assisted translation with subsequent human review (faster to scale, less fine-grained control), this must be decided explicitly: it changes the authoring process, not the data schema.
-2. **Behavior when a concept's translation is missing for the requested language** — I propose an explicit failure of the generation for that language (consistent with CLAUDE.md §34: "critical component → fail explicitly"), rather than silently skipping the AI SENZA SBATTI section. To be confirmed.
+1. **Curation vs. translation of concepts (§5.3)** — I assumed separate manual curation of `technical_definition` for `it`/`en`. If you prefer LLM-assisted translation with subsequent human review (faster to scale, less fine-grained control), this must be decided explicitly: it changes the authoring process, not the data schema. Still open after TASK-016 (§4.9), which only consumes an already-validated `technical_definition` supplied by its caller and does not implement curation, translation or storage of it.
+2. **Behavior when a concept's translation is missing for the requested language** — I propose an explicit failure of the generation for that language (consistent with CLAUDE.md §34: "critical component → fail explicitly"), rather than silently skipping the AI SENZA SBATTI section. To be confirmed. Still open after TASK-016 — the stage has no way to detect a missing translation itself, since it never reads `ConceptTranslation`; this remains the responsibility of whichever future stage prepares `ConceptExplanationInput`.
 3. **Multi-language generation in a single CLI invocation vs. separate invocations (§5.1)** — I chose "one language per invocation" for simplicity and failure isolation. If you prefer `ai-daily run` to generate all configured languages in a single command, it is a contained change but must be decided now because it affects the CLI's signature.
 4. **Hedging-language detection in English and Italian (§4.4/§5.4)** — the PRD only lists markers in English; the Italian equivalents ("secondo alcune fonti", "si vocifera", "potrebbe", "sarebbe atteso", etc.) must be defined before implementing the verification module. Still open after TASK-015, which only consumes hedging constraints supplied by its caller (§4.4, §4.8).
 5. **Historical persistence on GitHub Actions** (an ambiguity already raised in the general architectural analysis, not specific to language) — runners are ephemeral; the PRD asks for historical preservation (§1.10) but does not indicate where `data/ai_daily.db` and the PDFs persist between runs. Not blocking for the MVP (local execution via CLI), but must be resolved before v0.2 (automation).
+6. **Concept selection (PRD §11, §42)** — which module selects the concept connected to the day's news, and how it prepares the `ConceptExplanationInput.news_context` it hands to TASK-016 (§4.9), is not yet decided. TASK-016 explicitly receives the selected concept, its already-validated technical definition and its news context as caller-supplied input and does not implement selection itself; this is deferred to a future task.
 
 ---
 
