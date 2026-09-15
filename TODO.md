@@ -24,8 +24,8 @@
 
 ## Milestone 4 — AI
 
-- [ ] TASK-014 — LLM provider abstraction
-- [ ] TASK-015 — Summarization
+- [x] TASK-014 — LLM provider abstraction
+- [x] TASK-015 — Summarization
 - [ ] TASK-016 — AI Senza Sbatti
 - [ ] TASK-017 — Developer Impact
 

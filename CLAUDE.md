@@ -720,6 +720,8 @@ The project uses:
 CLAUDE.md
 README.md
 TODO.md
+docs/PRD.md
+docs/ARCHITECTURE.md
 ```
 
 ## CLAUDE.md
@@ -758,16 +760,34 @@ Contains:
 
 It must not become a second README.
 
+## docs/PRD.md
+
+Contains:
+
+* product requirements;
+* editorial rules and behavior;
+* product-level decisions.
+
+Does not contain Python implementation details, class names, test names, or internal module/package structure.
+
+## docs/ARCHITECTURE.md
+
+Contains:
+
+* technical architecture and module design;
+* the data model;
+* approved architectural decisions;
+* the actual implementation status of each pipeline stage, alongside historical/superseded proposals clearly marked as such.
+
+See "Documentation Synchronization" for when each of these documents must be updated.
+
 ---
 
 # 28. Documentation after each task
 
-When a task is completed and verified:
+When a task is completed and verified, follow the "Documentation Synchronization" policy: update `TODO.md`, `docs/PRD.md`, `docs/ARCHITECTURE.md` and `README.md` as needed, and verify that the documentation describes the actual code.
 
-1. update `TODO.md` if necessary;
-2. update `CLAUDE.md` only if rules, architecture or permanent information have changed;
-3. update `README.md` if public behavior or installation have changed;
-4. verify that the documentation describes the actual code.
+`CLAUDE.md` is never updated automatically. If the task reveals a discrepancy that requires changing `CLAUDE.md`, flag it separately and stop — do not modify `CLAUDE.md` without explicit approval.
 
 Do NOT implement the next task.
 
@@ -1041,13 +1061,17 @@ Brief explanation of the implementation decisions.
 
 ## Documentation
 
-State whether the following were updated:
+Report the documentation impact check (see "Documentation Synchronization"): for each document below, state whether it was updated, or why no update was needed.
 
 ```text
-CLAUDE.md
-README.md
 TODO.md
+docs/PRD.md
+docs/ARCHITECTURE.md
+README.md
+CLAUDE.md
 ```
+
+`CLAUDE.md` is never updated automatically: report only whether a discrepancy requiring approval was flagged.
 
 ## Next task
 
@@ -1215,3 +1239,59 @@ This distinction must be preserved throughout the architecture. See `docs/ARCHIT
 ## Documentation translation status (2026-09-11)
 
 `CLAUDE.md`, `docs/PRD.md`, `docs/ARCHITECTURE.md` and `TODO.md` have been translated to English under this policy, preserving structure, meaning, requirements and decisions. The repository's project documentation is now English-only, with Italian preserved only where it is itself user-facing editorial content produced by AI Daily (e.g. worked examples of `it`-language output), and in the proper names `AI SENZA SBATTI` and `TERMINE DEL GIORNO`, which are treated as fixed product/section names rather than translated phrases (see the terminology note recorded alongside this translation task).
+
+## Documentation Synchronization
+
+Documentation is part of the project state and must remain aligned with
+the implemented code and approved architectural decisions.
+
+After completing a task, Claude must evaluate whether the task changes,
+clarifies, supersedes, or invalidates information documented in:
+
+- `TODO.md`
+- `docs/PRD.md`
+- `docs/ARCHITECTURE.md`
+- `README.md`
+
+When a documentation update is required to keep the repository truthful,
+it must be treated as part of task completion.
+
+### Rules
+
+1. `TODO.md` must be kept synchronized with the actual task status.
+   Completed tasks must be marked `[x]` and their descriptions must reflect
+   what was actually implemented.
+
+2. `docs/PRD.md` must be updated when a task introduces or changes a
+   product-level requirement or behavior.
+
+3. `docs/ARCHITECTURE.md` must be updated when a task introduces,
+   confirms, supersedes, or materially changes an architectural decision,
+   interface, module boundary, lifecycle, or implementation strategy.
+
+4. `README.md` must be updated when repository setup, usage, project status,
+   validation commands, or other user-facing project information becomes
+   stale.
+
+5. `CLAUDE.md` must NOT be modified automatically. Changes to project rules,
+   workflow, or permanent agent instructions require explicit approval.
+
+6. Documentation updates must be minimal and scoped to the actual task.
+   Do not rewrite unrelated sections or introduce speculative future
+   architecture.
+
+7. Historical proposals may remain documented when useful, but must be
+   clearly marked as historical, superseded, or not adopted.
+
+8. Do not leave known documentation contradictions unresolved merely because
+   the task implementation itself is complete.
+
+9. Before finalizing a task, perform a documentation impact check and report:
+   - which documents require updates;
+   - which documents were intentionally left unchanged;
+   - why no update is needed when applicable.
+
+10. Documentation synchronization must never be used as a reason to expand
+    the implementation scope of the current task. If a documentation
+    update reveals a missing architectural decision or an unowned task,
+    stop and report it rather than inventing a solution.

@@ -1,7 +1,7 @@
 AI DAILY
 
 Product Requirements Document — v0.1
-(Addendum: §38 Edition Language — 2026-09-11)
+(Addenda: §38 Edition Language, §39 Repository Language Policy, §40 Editorial Section Names — 2026-09-11; §41 Summarization — 2026-09-15)
 
 Project name: AI Daily
 Type: Automated AI News Intelligence & Learning Platform
@@ -245,6 +245,8 @@ PDF
 
 Each stage must be separate and testable.
 
+The SUMMARIZE stage is specified in §41.
+
 ⸻
 
 8. Deduplication
@@ -426,6 +428,8 @@ Where possible, the original link must be present.
 
 The system must always preserve the link to the primary source.
 
+Sources are attached to each newspaper article when the edition is assembled, from the original source data, and must remain clearly distinguishable from AI-generated text (see §41).
+
 ⸻
 
 16. PDF
@@ -605,20 +609,18 @@ ai-daily/
 
 The code must be designed to not depend rigidly on a single provider.
 
-Create an abstract interface:
+Access to language models goes through a single provider-agnostic abstraction: the rest of the system must not depend on a specific vendor.
 
-class LLMProvider:
-    def summarize(...)
-    def classify(...)
-    def explain(...)
-    def rank(...)
+Supported providers:
 
-Possible implementations:
-
-AnthropicProvider
-OpenAIProvider
+* Anthropic
+* OpenAI
 
 The provider must be selectable via configuration.
+
+Use cases that rely on a language model, such as summarization (§41), LLM classification (§31) and the AI SENZA SBATTI explanations (§11–12), are separate pipeline stages built on this abstraction, not features of a specific provider. Importance ranking does not use a language model: it is computed deterministically (§10).
+
+Historical note: the first version of this section sketched a provider interface with one method per use case (summarize, classify, explain, rank). That sketch was not adopted; the interface actually implemented is documented in docs/ARCHITECTURE.md §2.1.
 
 ⸻
 
@@ -1042,3 +1044,46 @@ The Italian-language column below is editorial content, not project documentatio
 These are approved product decisions. Elsewhere in this document, in `CLAUDE.md`, and in `docs/ARCHITECTURE.md`, the two sections continue to be referred to by their internal/canonical identifiers (`AI SENZA SBATTI`, `TERMINE DEL GIORNO`) — this table is the source of truth for what each edition language actually displays to the reader.
 
 Note: this table covers the 13 top-level section names only. Labels for sub-section content (e.g. the `DEVELOPER IMPACT` subsection per §13, the `WHAT THEY DID`/`WHAT THEY FOUND`/… research breakdown per §14, and the `WHAT IT IS`/`SIMPLE EXPLANATION`/… AI SENZA SBATTI template headers per §11) are not yet finalized and are out of scope for this addendum.
+
+⸻
+
+41. Summarization (addendum — 2026-09-15)
+
+This section specifies the SUMMARIZE stage of the pipeline (§7).
+
+Role
+
+For each event that reaches this stage, summarization produces the reader-facing title and summary, in the edition's language (§38), from the content of the sources that report the event.
+
+Summarization is not verification
+
+Summarization does not verify, corroborate or score events, and it does not classify or rank them. It receives the event's verification_status (§4), and any uncertainty constraints, from the earlier stages, and must reflect them in its wording:
+
+* VERIFIED: direct language; only information supported by the sources is presented as fact.
+* PARTIALLY_VERIFIED: cautious language; what is confirmed is distinguished from what remains only partially verified.
+* DEVELOPING: cautious language, stating clearly that the situation is still developing.
+* UNVERIFIED: explicitly cautious language; nothing that is not verified is presented as established fact.
+
+No invention
+
+A summary may only use information present in the analyzed sources. It must not invent numbers, prices, dates, benchmarks, quotes, statements, features, technical specifications, product names or sources. Information that is not available in the sources is left out rather than guessed.
+
+Uncertainty preservation
+
+The level of uncertainty expressed by the sources must be preserved (§5): rumors, leaks, speculation and unconfirmed statements are never turned into facts.
+
+Untrusted content
+
+Source content is untrusted data (§29, §30): instructions that appear inside an article are never followed.
+
+Language
+
+A summary is generated in one language at a time. The Italian and English versions of the same event are generated separately from the same, already analyzed event, without repeating collection, verification, classification or ranking (§38).
+
+Sources and attribution
+
+A summary is AI-generated text and is never presented as a quotation of a source. The sources of an event are attached to the newspaper article when the edition is assembled (§15), so that they remain clearly distinguishable from the AI-generated summary.
+
+Invalid output
+
+If the generated output does not have the required structure (a title and a summary), it is rejected: no guessed, partial or repaired title or summary is used.
