@@ -2,7 +2,7 @@
 
 Automated AI News Intelligence & Learning Platform — a system that collects, verifies, analyzes and summarizes news about artificial intelligence and generates a digital newspaper in PDF format.
 
-**Status: in development.** Several pipeline components are implemented as standalone, tested modules (see [Architecture](#architecture)); they are not yet connected into an end-to-end pipeline, and there is no CLI or PDF output yet. This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
+**Status: in development.** Several pipeline components are implemented as standalone, tested modules (see [Architecture](#architecture)); they are not yet connected into an end-to-end pipeline, and there is no CLI yet. This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
 
 ## Documentation
 
@@ -57,13 +57,14 @@ Implemented so far, as standalone and tested modules that are not yet connected 
 - RSS collection, article normalization and deduplication;
 - event clustering, deterministic event verification and deterministic importance ranking;
 - the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
-- in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted or rendered.
+- in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted;
+- PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers) as in-memory bytes — no citation/source formatting (planned for a later task), no file writing and no persistence.
 
-Not implemented yet: filtering, hedging-language detection, classification, concept selection, PDF generation, CLI and automation.
+Not implemented yet: filtering, hedging-language detection, classification, concept selection, citation/source formatting, CLI and automation.
 
 ## Language
 
-The repository (code, configuration, docs) is English-only — see `CLAUDE.md` §43 for the full policy. AI Daily's generated editorial content supports Italian (`it`) and English (`en`), selected per edition: event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment already take the target language as input, while the other generation stages are not implemented yet.
+The repository (code, configuration, docs) is English-only — see `CLAUDE.md` §43 for the full policy. AI Daily's generated editorial content supports Italian (`it`) and English (`en`), selected per edition: event summarization, AI Senza Sbatti concept explanation, Developer Impact assessment and PDF rendering already take the target language as input (`Edition.language` drives section labels, the masthead date and the footer page-number wording), while the other generation stages are not implemented yet.
 
 ## License
 

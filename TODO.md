@@ -34,7 +34,7 @@
 
 - [x] TASK-019 — Editorial model
 - [x] TASK-020 — Newspaper layout
-- [ ] TASK-021 — PDF generator
+- [x] TASK-021 — PDF generator
 - [ ] TASK-022 — Sources and citations
 
 ## Milestone 6 — Automation

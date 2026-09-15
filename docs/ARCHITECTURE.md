@@ -2,7 +2,7 @@
 
 Technical architecture proposal for the MVP, derived from [PRD.md](./PRD.md) and constrained by the rules in [../CLAUDE.md](../CLAUDE.md).
 
-Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-018, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10); superseded or not adopted proposals are kept and marked as historical.
+Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-021, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10, §4.11); superseded or not adopted proposals are kept and marked as historical.
 
 ---
 
@@ -13,7 +13,7 @@ Status: **originally written as the MVP proposal; partially implemented (TASK-00
 | Area | Choice | Note |
 |---|---|---|
 | Language | Python 3.11+ | typed, consistent with CLAUDE.md §8 |
-| PDF | `reportlab` | explicit (PRD §16) |
+| PDF | `reportlab` | explicit (PRD §16); adopted (TASK-021, see §4.11) |
 | DB | SQLite | explicit (PRD §20) |
 | LLM | `anthropic`, `openai` (official SDKs) | behind an abstract interface (PRD §22) |
 | Config | `.env` + `python-dotenv`, `config/sources.yaml` + `PyYAML` | PRD §6, §26 |
@@ -37,6 +37,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 | Type checking | `mypy` | explicitly required as a gate (PRD §35) | — |
 | Tests | `pytest` (`pytest-cov` was proposed, not adopted) | PRD §25 | stdlib `unittest`, less ergonomic |
 | HTTP mocking in tests | `responses` (adopted; `pytest-httpx` was the alternative) | avoids real network calls in collector tests/CI | — |
+| PDF structural test assertions (TASK-021) | `pypdf` (dev-only, adopted) | parses a rendered PDF back into page/text structure for `tests/test_newspaper_renderer.py`; not used by any runtime code | `pdfminer.six` was considered, `pypdf` is lighter and sufficient for text-extraction assertions |
 
 **Not introduced**: ORM (SQLAlchemy), Alembic, code/message bus, cache, microservices — consistent with CLAUDE.md §5 (avoid over-engineering). Data access via stdlib `sqlite3` + typed repositories; migrations as numbered SQL scripts applied at startup.
 
@@ -46,7 +47,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 
 ## 2. Module architecture
 
-Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-020 follows the block):
+Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-021 follows the block):
 
 ```
 COLLECT              → app/collectors/       (RssCollector, ApiCollector, HtmlCollector)
@@ -65,7 +66,7 @@ ORCHESTRATION         → app/pipeline/          (stage wiring, used by the CLI)
 DATA ACCESS           → app/database/          (connection, migrations, repositories)
 ```
 
-Implementation status (up to TASK-020):
+Implementation status (up to TASK-021):
 
 | Stage / concern | Actual module | Status |
 |---|---|---|
@@ -81,7 +82,8 @@ Implementation status (up to TASK-020):
 | AI EXPLANATION | `app/ai/concept_explainer.py` | implemented (TASK-016), in-memory, see §4.9; concept selection and technical-definition curation/validation are not part of it |
 | DEVELOPER IMPACT (not in the original mapping) | `app/ai/developer_impact.py` | implemented (TASK-018), in-memory, one LLM call, see §4.10; not persisted |
 | EDITORIAL ASSEMBLY | `app/editorial/` | implemented: `event_editorial.py` (TASK-019) assembles one event's `EditorialContent` per language; `edition.py` (TASK-020) composes an in-memory `Edition` from several `EditorialContent` (Top Stories, the nine category sections, What to Watch), see §4.6; `category`, `importance_score` and `future_date` are caller-supplied, since CLASSIFY and future-event extraction are not implemented |
-| PDF, ORCHESTRATION | — | not implemented |
+| PDF | `app/newspaper/renderer.py` | implemented (TASK-021), pure, in-memory, see §4.11; renders an already-composed `Edition` to PDF bytes -- no citation formatting, no persistence |
+| ORCHESTRATION | — | not implemented |
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
 | DATA ACCESS | `app/database/` | connection, numbered SQL migrations, and models/repositories for `Source`, `Article`, `Event` (TASK-004, TASK-005, TASK-007, TASK-011) |
@@ -363,6 +365,26 @@ DeveloperImpact        event_id, language, has_developer_impact, impact_summary 
 - **Persistence: none.** Implemented in-memory; persistence integration pending (MODEL B, §4.7). The stage does not create or update an `Event` and does not write `event_content`; how a `DeveloperImpact` would be stored in `event_content.structured_content` (§3) is not specified.
 - **Limits.** No marker-based hedging detection (§4.4); no `EventContent` persistence; no dependency on CLASSIFY; no editorial integration and no localized `DEVELOPER IMPACT` label (PRD §40). As in §2.1a, a response truncated by the token limit cannot be detected as such: it is rejected only if it breaks the response contract.
 
+### 4.11 PDF rendering (TASK-021)
+
+`app/newspaper/renderer.py` implements the PDF stage (docs/PRD.md §16) as a pure, in-memory function built on ReportLab's `Platypus` layout engine:
+
+```
+render_edition(edition: Edition, *, metadata: NewspaperMetadata) -> bytes
+
+NewspaperMetadata   edition_number (>=1), edition_date
+```
+
+- **Input is the already-final `Edition`.** The renderer performs no Top Stories/section/What to Watch selection, filtering, grouping or re-sorting: `edition.top_stories`, `edition.sections` (in their already-fixed canonical order) and `edition.what_to_watch` are rendered in exactly the order `app.editorial.edition.assemble_edition` (TASK-020) produced them. `Edition` is never mutated.
+- **`NewspaperMetadata` is renderer-owned, not a field of `Edition`.** Edition numbering and the publication date are publication-time concerns, not editorial content; adding them to `Edition` would couple the editorial model (TASK-019/020) to the renderer. `NewspaperMetadata` is a frozen pydantic model defined in `renderer.py` itself (no separate module, per CLAUDE.md §37).
+- **Layout.** Single-column A4, ~2cm uniform margins, Times-Roman/Times-Bold Base-14 fonts (page geometry and `ParagraphStyle` definitions live in `app/newspaper/styles.py`, pure data with no editorial logic). Page 1 holds the masthead (`AI DAILY`, the edition date and edition number) and Top Stories, followed by one explicit `PageBreak()`; page 2 onward flows the category sections and What to Watch using `Platypus`'s native pagination (`Paragraph`, `Spacer`, `HRFlowable`, `KeepTogether`) -- no manual page-breaking algorithm. A category section is rendered only when it has at least one entry; `section.label` is used exactly as supplied by `Edition`, never recomputed from the slug.
+- **AI SENZA SBATTI / Developer Impact.** Rendered from the data already present on `EditorialContent.developer_impact` / `.concept_explanation` (all already-generated fields, nothing invented), distinguished from the story summary purely by typography/indentation/rules -- no new semantic sub-headers were added and `config/labels.yaml` was not modified, since those sub-labels are not yet approved (docs/PRD.md §40 note). A `DeveloperImpact` whose `has_developer_impact` is `False` (a normal "no impact" outcome, docs/PRD.md §43) renders nothing.
+- **Masthead-only static strings.** The edition-number label ("Edition No. {n}" / "Edizione n. {n}"), the footer page-number label ("Page {n}" / "Pagina {n}") and the edition-date month names are small, renderer-internal strings, not a new localization structure and not an addition to `config/labels.yaml` (which has no entries for these). Section headings (Top Stories, the nine categories, What to Watch) use the existing `config/labels.yaml` values via the same `app.config.labels.load_labels()`/`Labels.get()` primitive `app.editorial.edition` already uses, memoized the same way.
+- **Not rendered (explicit scope boundary, TASK-022).** `EditorialContent.articles` (source names, URLs, publication dates, excerpts) is never read by this module: citation/source formatting is TASK-022's responsibility. No `verification_status` badge, label or color is rendered -- the wording already produced by earlier stages carries the required caution. No `Research` section exists, since no upstream model produces one.
+- **Error handling.** `NewspaperRenderError` (`app/newspaper/errors.py`) wraps only genuine ReportLab rendering failures raised by `SimpleDocTemplate.build()` (ReportLab's own `LayoutError` and `PDFError`), following the same wrapping pattern as `LLMProviderError` (§2.1a). A bare `except Exception` is deliberately not used, so a programming error in this module's own flowable-building code still propagates and fails tests rather than being silently reclassified as a rendering error.
+- **Unicode.** Base-14 Times-Roman/Times-Bold fonts were verified (not merely assumed) to render the full set of Italian accented characters (à, è, é, ì, ò, ù and their uppercase forms) correctly; no bundled Unicode font was needed.
+- **Persistence: none.** The function returns `bytes` only -- it never writes to a filesystem path, never opens a database connection and is never given one. Where a generated PDF is written to disk or has its path recorded (`edition.pdf_path`, §3) is not decided by this stage and remains open (§6, ambiguity #8).
+
 ---
 
 ## 5. Localization (replaces the previous open ambiguity about language)
@@ -419,14 +441,14 @@ Reference: PRD §38.
 5. **Historical persistence on GitHub Actions** (an ambiguity already raised in the general architectural analysis, not specific to language) — runners are ephemeral; the PRD asks for historical preservation (§1.10) but does not indicate where `data/ai_daily.db` and the PDFs persist between runs. Not blocking for the MVP (local execution via CLI), but must be resolved before v0.2 (automation).
 6. **Concept selection (PRD §11, §42)** — which module selects the concept connected to the day's news, and how it prepares the `ConceptExplanationInput.news_context` it hands to TASK-016 (§4.9), is not yet decided. TASK-016 explicitly receives the selected concept, its already-validated technical definition and its news context as caller-supplied input and does not implement selection itself; this is deferred to a future task.
 7. **`DEVELOPING` status (PRD §4)** — the verification stage (§4.3a) never produces `DEVELOPING`: whether an event is still unfolding is not derivable from source tier/reliability, and no signal for it has been decided. Still open after TASK-017.
-8. **Persistence integration of analysis and generation results (§4.7)** — how a cluster's VERIFY, CLASSIFY and RANK results become an `Event` row, and how the SUMMARIZE and Developer Impact outputs are written to `event_content` (including the structure of `structured_content`, §3), is not decided. Still open after TASK-015, TASK-017, TASK-018, TASK-019 and TASK-020, which are all in-memory -- `Edition`/`EditionSection` (§4.6, §2) are not persisted either.
+8. **Persistence integration of analysis and generation results (§4.7)** — how a cluster's VERIFY, CLASSIFY and RANK results become an `Event` row, and how the SUMMARIZE and Developer Impact outputs are written to `event_content` (including the structure of `structured_content`, §3), is not decided. Still open after TASK-015, TASK-017, TASK-018, TASK-019 and TASK-020, which are all in-memory -- `Edition`/`EditionSection` (§4.6, §2) are not persisted either. TASK-021 (§4.11) does not resolve this either: `render_edition` returns PDF `bytes` only and never writes a file or touches `Edition.pdf_path` -- where a generated PDF is written to disk, and how/whether `pdf_path` is recorded, remains open.
 9. **`category`/`importance_score`/`future_date` sourcing for editorial assembly (§2, §4.6)** — `app/editorial/edition.py` (TASK-020) requires a `category` (CLASSIFY output, not implemented), an `importance_score` (RANK output, already implemented by TASK-013) and a `future_date` per event as caller-supplied input to `EventForEdition`, but no code currently produces `category` or `future_date` for a real event, and no orchestration stage exists yet to join them with a `RankedEvent`/`Event`. Still open after TASK-020, which deliberately consumes these values without computing, deriving or validating them.
 
 ---
 
 ## 7. MVP implementation plan (increments)
 
-Not substantively changed by the language decision, except Phase 5 (Summarize/AI Senza Sbatti) and Phase 6/7 (Editorial/PDF), which now explicitly include the language parameter. **Historical plan, kept for reference**: implementation has proceeded task by task (TASK-001 → TASK-020) rather than phase by phase, and the authoritative roadmap and task status are in [../TODO.md](../TODO.md). Some phase descriptions no longer match the implemented decisions (near-duplicate detection and clustering into `Event` in Phase 2, hedging detection in Phase 3, the provider interface and LLM-assisted ranking in Phase 4, `EventContent` persistence in Phase 5, `Edition` composition without DB persistence in Phase 6): see §2.1a, §4.1a, §4.2a, §4.3a, §4.6, §4.7 and §4.8.
+Not substantively changed by the language decision, except Phase 5 (Summarize/AI Senza Sbatti) and Phase 6/7 (Editorial/PDF), which now explicitly include the language parameter. **Historical plan, kept for reference**: implementation has proceeded task by task (TASK-001 → TASK-021) rather than phase by phase, and the authoritative roadmap and task status are in [../TODO.md](../TODO.md). Some phase descriptions no longer match the implemented decisions (near-duplicate detection and clustering into `Event` in Phase 2, hedging detection in Phase 3, the provider interface and LLM-assisted ranking in Phase 4, `EventContent` persistence in Phase 5, `Edition` composition without DB persistence in Phase 6, PDF generation without persistence or citation formatting in Phase 7): see §2.1a, §4.1a, §4.2a, §4.3a, §4.6, §4.7, §4.8 and §4.11.
 
 | Phase | Content | Exit criteria |
 |---|---|---|
