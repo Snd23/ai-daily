@@ -20,6 +20,10 @@ dependencies = [
     "PyYAML>=6.0",
     "requests>=2.31",
     "tzdata>=2024.1; sys_platform == 'win32'",
+    # PDF rendering for the newspaper generator (TASK-021, CLAUDE.md §7,
+    # docs/PRD.md §16, docs/ARCHITECTURE.md §1.1): explicitly mandated by
+    # the PRD, not an open choice -- see app/newspaper/renderer.py.
+    "reportlab>=5.0.1",
 ]
 
 [dependency-groups]
@@ -30,6 +34,11 @@ dev = [
     "types-PyYAML>=6.0",
     "responses>=0.25",
     "types-requests>=2.31",
+    "types-reportlab>=5.0.0.20260911",
+    # Test-only: parses generated PDFs back into text/page structure for
+    # TASK-021's structural tests (tests/test_newspaper_renderer.py) --
+    # not used by any runtime code.
+    "pypdf>=6.18.1",
 ]
 
 [build-system]
