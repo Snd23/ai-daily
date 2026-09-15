@@ -307,7 +307,11 @@ The score must be within the range:
 
 0.0 → 10.0
 
-Top Stories must be selected primarily based on this score.
+The score must be computed deterministically and reproducibly: given the same inputs, the system must always produce the same importance_score.
+
+Importance and verification are separate concerns. The importance_score must reflect how significant an event is, independently of how well it has been verified; verification_status must not be used to artificially inflate or penalize the importance_score.
+
+Top Stories must be selected primarily based on the importance_score, but an event with verification_status = UNVERIFIED must never appear in the Top Stories (see §4), regardless of its importance_score. Exclusion from the Top Stories selection — not penalization of the score — is how unverified events are handled.
 
 ⸻
 

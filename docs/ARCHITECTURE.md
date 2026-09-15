@@ -29,7 +29,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 | RSS parsing (PRD §6) | `feedparser` | de facto standard | no sensible stdlib alternative |
 | HTTP fetch (API/official pages) | `requests` | sync is sufficient for a daily batch job | stdlib `urllib`, but more cumbersome for headers/retry |
 | Content extraction from pages without RSS | `beautifulsoup4` + `lxml` | necessary for the HTML scraping envisaged by PRD §6 | none |
-| Title deduplication/clustering | `rapidfuzz` | lightweight fuzzy matching, no heavy ML dependency | stdlib `difflib`, slower and less accurate on short text |
+| Title deduplication/clustering | `rapidfuzz` — **historical proposal, not adopted** (see §4.1/§4.1a) | originally proposed for fuzzy title matching | TASK-012 implemented clustering as deterministic exact-match on a normalized title; no fuzzy-matching dependency is used |
 | CLI | `typer` (proposed) | typed signature consistent with CLAUDE.md §8; `argparse` stdlib is the zero-dependency alternative | `argparse` |
 | Typed data validation (config, LLM output) | `pydantic` | validates `sources.yaml`, `config/labels.yaml` and the LLM's JSON responses | dataclasses + manual validation |
 | Lint | `ruff` | lint + formatting in a single tool | `flake8`+`black`+`isort` (more dependencies) |
@@ -78,6 +78,7 @@ class LLMProvider:
 
 Notes:
 
+- `rank(event, context) -> RankingSignal` was the original proposal for LLM-assisted ranking. It is **historical, not adopted, and not implemented anywhere in the codebase**: importance ranking (TASK-013) is implemented as a deterministic formula outside `LLMProvider` — see §4.2a.
 - `classify` and `rank` **do not receive `language`**: they produce structural data (category, score, internal/audit rationale) reusable for any output language. This is consistent with CLAUDE.md §35 (cost control): do not re-run classification/ranking per language.
 - `summarize` and `explain` receive `language` and produce text intended for the reader.
 - `explain` receives an already-validated `technical_definition` (see §5.3) and only produces the simplification in the requested language — it does not generate the technical definition from scratch.
@@ -135,10 +136,38 @@ Hierarchical relationship: `Source → Article → Event → EventContent (per l
 ## 4. Critical components (design decisions not specified in the PRD)
 
 ### 4.1 Cross-source event clustering
-No technical guidance in the PRD (§8). MVP proposal: heuristic — title similarity (`rapidfuzz.token_sort_ratio`) + time window (~48h) + overlap of raw keywords/entities. No embeddings/ML in v0.1: cheaper, deterministic, testable. Should be validated against real data before being trusted in production.
+No technical guidance in the PRD (§8). Original MVP proposal (**historical, not adopted** — superseded by the TASK-012 implementation in §4.1a): heuristic — title similarity (`rapidfuzz.token_sort_ratio`) + time window (~48h) + overlap of raw keywords/entities. No embeddings/ML in v0.1: cheaper, deterministic, testable.
+
+#### 4.1a Actual implementation (TASK-012)
+
+`app/clustering/article_clusterer.py` implements clustering as a deterministic exact match on a normalized title: HTML-unescape → Unicode NFKC normalize → casefold → replace punctuation with whitespace → collapse whitespace. Two articles are grouped together if and only if their normalized titles are identical and non-empty. No fuzzy matching, no semantic/embedding similarity, no LLM, no source tier/reliability weighting, and no time window are used.
+
+`cluster_articles()` returns in-memory `ArticleCluster` objects only. It does not persist an `Event` row and does not write `Article.event_id`, which stays `NULL` throughout its execution (see §4.7).
 
 ### 4.2 Importance score
-PRD §10 lists the factors but not their weights. Proposal: hybrid score — the LLM (`rank()`) returns a score with a textual rationale (for audit), corrected by auditable deterministic modifiers (tier of the sources involved, number of independent sources, `event_type`). A purely LLM, unweighted score would be poorly reproducible.
+PRD §10 lists the factors but not their weights. Original proposal (**historical, not adopted** — superseded by the TASK-013 implementation in §4.2a): a hybrid score where the LLM (`rank()`) returns a score with a textual rationale (for audit), corrected by auditable deterministic modifiers (tier of the sources involved, number of independent sources, `event_type`). A purely LLM, unweighted score would be poorly reproducible.
+
+#### 4.2a Actual implementation (TASK-013)
+
+`app/ranking/event_ranker.py` computes `importance_score` as a deterministic, fixed-weight linear combination of the 8 qualitative factors from PRD §10, each supplied by the caller in the range `[0.0, 10.0]`:
+
+```
+importance_score =
+    technological_impact     * 0.20 +
+    economic_impact          * 0.15 +
+    user_impact               * 0.15 +
+    developer_relevance       * 0.10 +
+    scientific_relevance      * 0.10 +
+    regulatory_relevance      * 0.10 +
+    source_authoritativeness  * 0.10 +
+    novelty                   * 0.10
+```
+
+Weights sum to 1.00. No LLM call is involved — `LLMProvider.rank()` (§2.1) is not implemented anywhere in the codebase. `rank_events()` sorts events by `importance_score` descending, with `event_id` ascending as a tiebreak.
+
+`regulatory_relevance` is this module's technical identifier for the PRD §10 factor "political/regulatory relevance"; the product requirement is unchanged, only the implementation name differs.
+
+The formula is pure and in-memory: it does not persist an `Event` row and does not itself read `verification_status`, `confidence_score`, `event_type`, `Source.tier`, or `Source.reliability_weight` (see §4.7).
 
 ### 4.3 Verification status
 Deterministic rule: `VERIFIED` if ≥1 direct Tier 1 source or ≥2 independent Tier 1/2 sources agree; `PARTIALLY_VERIFIED` if there is an authoritative source but details are missing; `DEVELOPING`/`UNVERIFIED` otherwise. The "no Tier 4 as sole confirmation" rule is hard-coded, not delegated to the LLM (CLAUDE.md §13, §15).
@@ -151,6 +180,20 @@ Generating *and* validating a technical explanation every day via LLM is risky (
 
 ### 4.6 What to Watch
 It is not specified whether items are extracted automatically or curated manually. Proposal: automatic extraction but with a high confidence threshold, only from Tier 1/2 sources, reusing the hedging module (§4.4) to discard speculative language. The `Event.future_date` field is language-neutral; the descriptive text lives in `EventContent` per language.
+
+### 4.7 Event lifecycle and persistence (current status)
+
+`Event` is a real table in the database schema (`id, verification_status, confidence_score, importance_score, event_type, future_date, created_at`, defined since TASK-004's initial migration), and `EventRepository` (TASK-011) implements `create`/`get_by_id` against it. However, no pipeline code currently calls `EventRepository`: TASK-012 (clustering, §4.1a) and TASK-013 (ranking, §4.2a) are both pure, in-memory functions. Neither persists an `Event` row, and neither writes `Article.event_id`, which stays `NULL` throughout their execution.
+
+A persisted `Event` row is created only when all values required by the `Event` schema's mandatory columns are available.
+
+For context, the conceptual pipeline order remains:
+
+```
+CLUSTER EVENTS → VERIFY → CLASSIFY → RANK → Event persistence
+```
+
+`VERIFY`, `CLASSIFY`, and the future persistence/integration stage that will assemble a cluster's `verification_status`, `event_type` and `importance_score` into a real `Event` row are **not yet implemented**. This section records current status only; it does not specify how that future stage will be implemented, and it does not introduce any new `Event` lifecycle state or decide on cross-run/historical reuse of clusters or scores.
 
 ---
 
