@@ -46,7 +46,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 
 ## 2. Module architecture
 
-Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-018 follows the block):
+Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-020 follows the block):
 
 ```
 COLLECT              → app/collectors/       (RssCollector, ApiCollector, HtmlCollector)
@@ -65,7 +65,7 @@ ORCHESTRATION         → app/pipeline/          (stage wiring, used by the CLI)
 DATA ACCESS           → app/database/          (connection, migrations, repositories)
 ```
 
-Implementation status (up to TASK-018):
+Implementation status (up to TASK-020):
 
 | Stage / concern | Actual module | Status |
 |---|---|---|
@@ -80,7 +80,8 @@ Implementation status (up to TASK-018):
 | SUMMARIZE | `app/ai/event_summarizer.py` | implemented (TASK-015), in-memory, see §4.8 |
 | AI EXPLANATION | `app/ai/concept_explainer.py` | implemented (TASK-016), in-memory, see §4.9; concept selection and technical-definition curation/validation are not part of it |
 | DEVELOPER IMPACT (not in the original mapping) | `app/ai/developer_impact.py` | implemented (TASK-018), in-memory, one LLM call, see §4.10; not persisted |
-| EDITORIAL ASSEMBLY, PDF, ORCHESTRATION | — | not implemented |
+| EDITORIAL ASSEMBLY | `app/editorial/` | implemented: `event_editorial.py` (TASK-019) assembles one event's `EditorialContent` per language; `edition.py` (TASK-020) composes an in-memory `Edition` from several `EditorialContent` (Top Stories, the nine category sections, What to Watch), see §4.6; `category`, `importance_score` and `future_date` are caller-supplied, since CLASSIFY and future-event extraction are not implemented |
+| PDF, ORCHESTRATION | — | not implemented |
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
 | DATA ACCESS | `app/database/` | connection, numbered SQL migrations, and models/repositories for `Source`, `Article`, `Event` (TASK-004, TASK-005, TASK-007, TASK-011) |
@@ -274,6 +275,8 @@ Current status (TASK-016): the Simplification-step half of this proposal is impl
 ### 4.6 What to Watch
 It is not specified whether items are extracted automatically or curated manually. Proposal: automatic extraction but with a high confidence threshold, only from Tier 1/2 sources, reusing the hedging module (§4.4) to discard speculative language. The `Event.future_date` field is language-neutral; the descriptive text lives in `EventContent` per language.
 
+Current status (TASK-020): `app/editorial/edition.py` consumes `future_date` exactly as proposed here (language-neutral, caller-supplied), but implements only the selection rule -- an event with `future_date is not None` is included in What to Watch, with no other criterion. `verification_status`, `DEVELOPING`, `published_at` and `importance_score` are never used as an admission criterion (`UNVERIFIED` events are not excluded from What to Watch, unlike Top Stories -- see §4). Whether items are extracted automatically or curated manually, and how `future_date` is actually populated for a real `Event`, remains undecided: `EventForEdition.future_date` is caller-supplied and is never computed, parsed or inferred by this module.
+
 ### 4.7 Event lifecycle and persistence (current status)
 
 `Event` is a real table in the database schema (`id, verification_status, confidence_score, importance_score, event_type, future_date, created_at`, defined since TASK-004's initial migration), and `EventRepository` (TASK-011) implements `create`/`get_by_id` against it. However, no pipeline code currently calls `EventRepository`: TASK-012 (clustering, §4.1a), TASK-013 (ranking, §4.2a), TASK-015 (summarization, §4.8), TASK-017 (verification, §4.3a) and TASK-018 (Developer Impact, §4.10) are all pure, in-memory functions. None of them persists an `Event` row or writes `Article.event_id`, which stays `NULL` throughout their execution, and neither TASK-015 nor TASK-018 writes `event_content`.
@@ -416,13 +419,14 @@ Reference: PRD §38.
 5. **Historical persistence on GitHub Actions** (an ambiguity already raised in the general architectural analysis, not specific to language) — runners are ephemeral; the PRD asks for historical preservation (§1.10) but does not indicate where `data/ai_daily.db` and the PDFs persist between runs. Not blocking for the MVP (local execution via CLI), but must be resolved before v0.2 (automation).
 6. **Concept selection (PRD §11, §42)** — which module selects the concept connected to the day's news, and how it prepares the `ConceptExplanationInput.news_context` it hands to TASK-016 (§4.9), is not yet decided. TASK-016 explicitly receives the selected concept, its already-validated technical definition and its news context as caller-supplied input and does not implement selection itself; this is deferred to a future task.
 7. **`DEVELOPING` status (PRD §4)** — the verification stage (§4.3a) never produces `DEVELOPING`: whether an event is still unfolding is not derivable from source tier/reliability, and no signal for it has been decided. Still open after TASK-017.
-8. **Persistence integration of analysis and generation results (§4.7)** — how a cluster's VERIFY, CLASSIFY and RANK results become an `Event` row, and how the SUMMARIZE and Developer Impact outputs are written to `event_content` (including the structure of `structured_content`, §3), is not decided. Still open after TASK-015, TASK-017 and TASK-018, which are all in-memory.
+8. **Persistence integration of analysis and generation results (§4.7)** — how a cluster's VERIFY, CLASSIFY and RANK results become an `Event` row, and how the SUMMARIZE and Developer Impact outputs are written to `event_content` (including the structure of `structured_content`, §3), is not decided. Still open after TASK-015, TASK-017, TASK-018, TASK-019 and TASK-020, which are all in-memory -- `Edition`/`EditionSection` (§4.6, §2) are not persisted either.
+9. **`category`/`importance_score`/`future_date` sourcing for editorial assembly (§2, §4.6)** — `app/editorial/edition.py` (TASK-020) requires a `category` (CLASSIFY output, not implemented), an `importance_score` (RANK output, already implemented by TASK-013) and a `future_date` per event as caller-supplied input to `EventForEdition`, but no code currently produces `category` or `future_date` for a real event, and no orchestration stage exists yet to join them with a `RankedEvent`/`Event`. Still open after TASK-020, which deliberately consumes these values without computing, deriving or validating them.
 
 ---
 
 ## 7. MVP implementation plan (increments)
 
-Not substantively changed by the language decision, except Phase 5 (Summarize/AI Senza Sbatti) and Phase 6/7 (Editorial/PDF), which now explicitly include the language parameter. **Historical plan, kept for reference**: implementation has proceeded task by task (TASK-001 → TASK-018) rather than phase by phase, and the authoritative roadmap and task status are in [../TODO.md](../TODO.md). Some phase descriptions no longer match the implemented decisions (near-duplicate detection and clustering into `Event` in Phase 2, hedging detection in Phase 3, the provider interface and LLM-assisted ranking in Phase 4, `EventContent` persistence in Phase 5): see §2.1a, §4.1a, §4.2a, §4.3a, §4.7 and §4.8.
+Not substantively changed by the language decision, except Phase 5 (Summarize/AI Senza Sbatti) and Phase 6/7 (Editorial/PDF), which now explicitly include the language parameter. **Historical plan, kept for reference**: implementation has proceeded task by task (TASK-001 → TASK-020) rather than phase by phase, and the authoritative roadmap and task status are in [../TODO.md](../TODO.md). Some phase descriptions no longer match the implemented decisions (near-duplicate detection and clustering into `Event` in Phase 2, hedging detection in Phase 3, the provider interface and LLM-assisted ranking in Phase 4, `EventContent` persistence in Phase 5, `Edition` composition without DB persistence in Phase 6): see §2.1a, §4.1a, §4.2a, §4.3a, §4.6, §4.7 and §4.8.
 
 | Phase | Content | Exit criteria |
 |---|---|---|

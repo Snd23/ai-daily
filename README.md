@@ -56,9 +56,10 @@ Implemented so far, as standalone and tested modules that are not yet connected 
 - SQLite schema, migrations and repositories for sources, articles and events;
 - RSS collection, article normalization and deduplication;
 - event clustering, deterministic event verification and deterministic importance ranking;
-- the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment.
+- the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
+- in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted or rendered.
 
-Not implemented yet: filtering, hedging-language detection, classification, concept selection, editorial assembly, PDF generation, CLI and automation.
+Not implemented yet: filtering, hedging-language detection, classification, concept selection, PDF generation, CLI and automation.
 
 ## Language
 

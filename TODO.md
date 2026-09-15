@@ -32,8 +32,8 @@
 
 ## Milestone 5 — Newspaper
 
-- [ ] TASK-019 — Editorial model
-- [ ] TASK-020 — Newspaper layout
+- [x] TASK-019 — Editorial model
+- [x] TASK-020 — Newspaper layout
 - [ ] TASK-021 — PDF generator
 - [ ] TASK-022 — Sources and citations
 
