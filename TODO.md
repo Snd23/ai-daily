@@ -28,7 +28,7 @@
 - [x] TASK-014 — LLM provider abstraction
 - [x] TASK-015 — Summarization
 - [x] TASK-016 — AI Senza Sbatti
-- [ ] TASK-018 — Developer Impact
+- [x] TASK-018 — Developer Impact
 
 ## Milestone 5 — Newspaper
 

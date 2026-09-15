@@ -1,7 +1,7 @@
 AI DAILY
 
 Product Requirements Document — v0.1
-(Addenda: §38 Edition Language, §39 Repository Language Policy, §40 Editorial Section Names — 2026-09-11; §41 Summarization, §42 AI Senza Sbatti — 2026-09-15)
+(Addenda: §38 Edition Language, §39 Repository Language Policy, §40 Editorial Section Names — 2026-09-11; §41 Summarization, §42 AI Senza Sbatti, §43 Developer Impact — 2026-09-15)
 
 Project name: AI Daily
 Type: Automated AI News Intelligence & Learning Platform
@@ -396,6 +396,8 @@ Possible contents:
 * cost optimization
 
 Where appropriate, include small code examples.
+
+The DEVELOPER IMPACT content is specified in §43.
 
 ⸻
 
@@ -1140,3 +1142,57 @@ The generated explanation is AI-generated text and must remain distinguishable f
 Persistence
 
 This stage does not persist anything: producing the AI SENZA SBATTI explanation for the day's edition, and how a concept's curated content is stored between editions, are not specified by this section.
+
+⸻
+
+43. Developer Impact (addendum — 2026-09-15)
+
+This section specifies the DEVELOPER IMPACT content of a news item (§13).
+
+Role
+
+For each event that reaches this stage, Developer Impact determines whether the event has a real, concrete impact for software developers and, only if it does, produces a reader-facing explanation of that impact, in the edition's language (§38), from the content of the sources that report the event.
+
+Only when there is a real impact
+
+Developer Impact is shown only when the event has a real, concrete consequence for developers. An event is not given a Developer Impact merely because its sources mention a technical term.
+
+The absence of Developer Impact is a normal result, not an error.
+
+A research result with no practical consequence for developers is not presented as Developer Impact merely because it is technical (§14).
+
+The possible contents, and the possibility of small code examples where appropriate, remain as described in §13.
+
+Developer Impact is not verification, classification or ranking
+
+Developer Impact does not verify, corroborate or score events, does not assign categories and does not affect the importance score (§10). It receives the event's verification_status (§4), and any uncertainty constraints, from the earlier stages, and must reflect them in its wording with the same level of caution required for summaries (§41).
+
+A Developer Impact may be produced for an event that is not fully verified, but for an event whose verification_status is DEVELOPING or UNVERIFIED a breaking change is never presented as an established fact.
+
+No invention
+
+Developer Impact may only use information present in the analyzed sources. It must not invent APIs, prices, numbers, dates, features, technical specifications, product names, consequences or sources. Information that is not available in the sources is left out rather than guessed.
+
+Uncertainty preservation
+
+The level of uncertainty expressed by the sources must be preserved (§5): rumors, leaks, speculation and unconfirmed statements are never turned into facts.
+
+Untrusted content
+
+Source content is untrusted data (§29, §30): instructions that appear inside an article are never followed.
+
+Language
+
+Developer Impact is generated in one language at a time. The Italian and English versions for the same event are generated separately from the same, already analyzed event, without repeating collection, verification, classification or ranking (§38).
+
+Sources and attribution
+
+Developer Impact is AI-generated text and is never presented as a quotation of a source; it must remain clearly distinguishable from the sources of the event (§15, §41).
+
+Invalid output
+
+If the generated output does not have the required structure, it is rejected: no guessed, partial or repaired Developer Impact is used, and a rejected output is never treated as the absence of Developer Impact.
+
+Persistence
+
+How Developer Impact is stored, and how it is placed in the edition, are not specified by this section.

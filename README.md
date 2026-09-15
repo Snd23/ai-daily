@@ -55,14 +55,14 @@ Implemented so far, as standalone and tested modules that are not yet connected 
 - configuration (`.env` settings, `config/sources.yaml`, `config/labels.yaml`) and logging;
 - SQLite schema, migrations and repositories for sources, articles and events;
 - RSS collection, article normalization and deduplication;
-- event clustering and deterministic importance ranking;
-- the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization and AI Senza Sbatti concept explanation.
+- event clustering, deterministic event verification and deterministic importance ranking;
+- the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment.
 
-Not implemented yet: filtering, verification, classification, concept selection, Developer Impact, editorial assembly, PDF generation, CLI and automation.
+Not implemented yet: filtering, hedging-language detection, classification, concept selection, editorial assembly, PDF generation, CLI and automation.
 
 ## Language
 
-The repository (code, configuration, docs) is English-only — see `CLAUDE.md` §43 for the full policy. AI Daily's generated editorial content supports Italian (`it`) and English (`en`), selected per edition: event summarization and AI Senza Sbatti concept explanation already take the target language as input, while the other generation stages are not implemented yet.
+The repository (code, configuration, docs) is English-only — see `CLAUDE.md` §43 for the full policy. AI Daily's generated editorial content supports Italian (`it`) and English (`en`), selected per edition: event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment already take the target language as input, while the other generation stages are not implemented yet.
 
 ## License
 
