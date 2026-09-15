@@ -21,28 +21,29 @@
 - [x] TASK-011 — Event persistence
 - [x] TASK-012 — Cluster events
 - [x] TASK-013 — Importance ranking
+- [x] TASK-017 — Event verification
 
 ## Milestone 4 — AI
 
 - [x] TASK-014 — LLM provider abstraction
 - [x] TASK-015 — Summarization
 - [x] TASK-016 — AI Senza Sbatti
-- [ ] TASK-017 — Developer Impact
+- [ ] TASK-018 — Developer Impact
 
 ## Milestone 5 — Newspaper
 
-- [ ] TASK-018 — Editorial model
-- [ ] TASK-019 — Newspaper layout
-- [ ] TASK-020 — PDF generator
-- [ ] TASK-021 — Sources and citations
+- [ ] TASK-019 — Editorial model
+- [ ] TASK-020 — Newspaper layout
+- [ ] TASK-021 — PDF generator
+- [ ] TASK-022 — Sources and citations
 
 ## Milestone 6 — Automation
 
-- [ ] TASK-022 — CLI
-- [ ] TASK-023 — Full pipeline
-- [ ] TASK-024 — GitHub Actions
+- [ ] TASK-023 — CLI
+- [ ] TASK-024 — Full pipeline
+- [ ] TASK-025 — GitHub Actions
 
 ## Milestone 7 — Delivery
 
-- [ ] TASK-025 — Telegram
-- [ ] TASK-026 — Archive
+- [ ] TASK-026 — Telegram
+- [ ] TASK-027 — Archive
