@@ -6,6 +6,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
+    # Official Anthropic/OpenAI SDKs behind the LLMProvider abstraction
+    # (TASK-014, CLAUDE.md §6/§19, docs/PRD.md §22): a hand-rolled REST
+    # client over `requests` or a third-party unifying library were both
+    # considered and rejected -- see app/llm/anthropic_provider.py and
+    # app/llm/openai_provider.py module docstrings for the full rationale.
+    "anthropic>=1.5",
+    "openai>=3.14",
     "feedparser>=6.0",
     "langdetect>=1.0",
     "pydantic>=2.9",
