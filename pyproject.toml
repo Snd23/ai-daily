@@ -24,7 +24,14 @@ dependencies = [
     # docs/PRD.md §16, docs/ARCHITECTURE.md §1.1): explicitly mandated by
     # the PRD, not an open choice -- see app/newspaper/renderer.py.
     "reportlab>=5.0.1",
+    # CLI framework (TASK-023, docs/PRD.md §32, docs/ARCHITECTURE.md §1.2):
+    # typed command signatures, consistent with CLAUDE.md §8; approved over
+    # the stdlib `argparse` alternative during TASK-023 FASE 0.
+    "typer>=0.27.2",
 ]
+
+[project.scripts]
+ai-daily = "app.cli.main:app"
 
 [dependency-groups]
 dev = [
