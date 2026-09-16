@@ -2,7 +2,7 @@
 
 Automated AI News Intelligence & Learning Platform — a system that collects, verifies, analyzes and summarizes news about artificial intelligence and generates a digital newspaper in PDF format.
 
-**Status: in development.** Several pipeline components are implemented as standalone, tested modules (see [Architecture](#architecture)); they are not yet connected into an end-to-end pipeline. A CLI now exposes the parts that are ready (`collect`, `process`); see [Usage](#usage). This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
+**Status: in development.** The pipeline now runs end to end: `ai-daily run` collects articles, processes them, clusters them into verified and ranked events, generates their content and produces a newspaper PDF (see [Usage](#usage)). Some stages of the product vision remain unimplemented — see [Architecture](#architecture). This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
 
 ## Documentation
 
@@ -54,24 +54,30 @@ Four commands are defined, per docs/PRD.md §32:
 
 - `ai-daily collect` — syncs `config/sources.yaml` into the database and fetches every active RSS source (TASK-007), persisting new articles.
 - `ai-daily process` — normalizes (TASK-008) and deduplicates (TASK-009) every `pending` article already collected.
-- `ai-daily generate` / `ai-daily run` — **not implemented yet.** They are exposed as commands (matching the PRD's planned surface) but exit immediately with a non-zero exit code and a message pointing to TASK-024 ("Full pipeline"): the stages they would need (event clustering/verification/ranking persisted as an `Event`, summarization, editorial assembly and PDF rendering wired end-to-end) are not connected yet — see [Architecture](#architecture) and TODO.md.
+- `ai-daily generate [--language it|en]` — turns the articles already collected and processed into one edition: clusters them into events, verifies and ranks them, persists the `Event` and its generated content, assembles the newspaper and writes the PDF. Defaults to `DEFAULT_LANGUAGE`; one invocation produces one language.
+- `ai-daily run [--language it|en]` — the full pipeline in one command: `collect`, then `process`, then `generate`. Stops at the first stage that fails.
+
+`generate` and `run` call the configured LLM provider (summarization and Developer Impact), so `LLM_PROVIDER` and the matching API key must be set. The PDF is written next to the database, as `<database directory>/editions/<date>-<language>.pdf` (for the default `DATABASE_URL`, `data/editions/`), and its path is recorded on the edition row.
+
+Re-running `generate` for the same day is safe: articles already attached to an event are not clustered again, already-generated content is reused instead of calling the LLM again, and the edition keeps its number while its PDF is rewritten.
 
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the technical architecture, including the actual implementation of each component built so far.
 
-Implemented so far, as standalone and tested modules that are not yet connected into a pipeline:
+Implemented so far, wired together by `app/pipeline/` (TASK-024) and driven by the CLI:
 
 - configuration (`.env` settings, `config/sources.yaml`, `config/labels.yaml`) and logging;
-- SQLite schema, migrations and repositories for sources, articles and events;
+- SQLite schema, migrations and repositories for sources, articles, events, generated event content and editions;
 - RSS collection, article normalization and deduplication;
 - event clustering, deterministic event verification and deterministic importance ranking;
 - the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
-- in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted;
-- PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations) as in-memory bytes — no file writing and no persistence.
-- a CLI (`app/cli/`, the `ai-daily` command, TASK-023) wiring `collect` and `process` to the modules above; `generate` and `run` are exposed but not implemented (see [Usage](#usage)).
+- editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch);
+- PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations);
+- pipeline orchestration (`app/pipeline/`, TASK-024): sequences the stages above into one persisted run — `Event`, `Article.event_id`, generated content per language, and the edition's PDF — including deterministic category assignment and ranking factors;
+- a CLI (`app/cli/`, the `ai-daily` command, TASK-023/TASK-024) exposing `collect`, `process`, `generate` and `run` (see [Usage](#usage)).
 
-Not implemented yet: filtering, hedging-language detection, classification, concept selection, the full end-to-end pipeline (`generate`/`run`) and automation.
+Not implemented yet: filtering, hedging-language detection, a real LLM classifier (categories are currently derived deterministically from each source's configured tags), concept selection and the AI SENZA SBATTI section, What to Watch population, and automation (scheduling, Telegram, archive).
 
 ## Language
 

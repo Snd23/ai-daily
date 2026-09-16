@@ -40,7 +40,7 @@
 ## Milestone 6 — Automation
 
 - [x] TASK-023 — CLI
-- [ ] TASK-024 — Full pipeline
+- [x] TASK-024 — Full pipeline
 - [ ] TASK-025 — GitHub Actions
 
 ## Milestone 7 — Delivery
