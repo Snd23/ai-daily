@@ -2,7 +2,7 @@
 
 Automated AI News Intelligence & Learning Platform — a system that collects, verifies, analyzes and summarizes news about artificial intelligence and generates a digital newspaper in PDF format.
 
-**Status: in development.** Several pipeline components are implemented as standalone, tested modules (see [Architecture](#architecture)); they are not yet connected into an end-to-end pipeline, and there is no CLI yet. This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
+**Status: in development.** Several pipeline components are implemented as standalone, tested modules (see [Architecture](#architecture)); they are not yet connected into an end-to-end pipeline. A CLI now exposes the parts that are ready (`collect`, `process`); see [Usage](#usage). This README documents what actually exists today; see [TODO.md](TODO.md) for the roadmap and task status.
 
 ## Documentation
 
@@ -44,7 +44,17 @@ uv run mypy          # type checking (the app package, as configured in pyprojec
 
 ## Usage
 
-Not available yet. The `ai-daily` CLI (`collect` / `process` / `generate` / `run`) is planned in a later task (see TODO.md, Milestone 6) and is not implemented yet. The modules implemented so far are exercised through the test suite.
+After `uv sync`, the `ai-daily` command is available (via `uv run ai-daily ...` or directly once the virtual environment is activated):
+
+```bash
+uv run ai-daily --help
+```
+
+Four commands are defined, per docs/PRD.md §32:
+
+- `ai-daily collect` — syncs `config/sources.yaml` into the database and fetches every active RSS source (TASK-007), persisting new articles.
+- `ai-daily process` — normalizes (TASK-008) and deduplicates (TASK-009) every `pending` article already collected.
+- `ai-daily generate` / `ai-daily run` — **not implemented yet.** They are exposed as commands (matching the PRD's planned surface) but exit immediately with a non-zero exit code and a message pointing to TASK-024 ("Full pipeline"): the stages they would need (event clustering/verification/ranking persisted as an `Event`, summarization, editorial assembly and PDF rendering wired end-to-end) are not connected yet — see [Architecture](#architecture) and TODO.md.
 
 ## Architecture
 
@@ -59,8 +69,9 @@ Implemented so far, as standalone and tested modules that are not yet connected 
 - the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
 - in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted;
 - PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations) as in-memory bytes — no file writing and no persistence.
+- a CLI (`app/cli/`, the `ai-daily` command, TASK-023) wiring `collect` and `process` to the modules above; `generate` and `run` are exposed but not implemented (see [Usage](#usage)).
 
-Not implemented yet: filtering, hedging-language detection, classification, concept selection, CLI and automation.
+Not implemented yet: filtering, hedging-language detection, classification, concept selection, the full end-to-end pipeline (`generate`/`run`) and automation.
 
 ## Language
 

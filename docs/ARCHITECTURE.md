@@ -2,7 +2,7 @@
 
 Technical architecture proposal for the MVP, derived from [PRD.md](./PRD.md) and constrained by the rules in [../CLAUDE.md](../CLAUDE.md).
 
-Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-022, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10, §4.11, §4.12); superseded or not adopted proposals are kept and marked as historical.
+Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-023, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10, §4.11, §4.12, §4.13); superseded or not adopted proposals are kept and marked as historical.
 
 ---
 
@@ -31,7 +31,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 | Article language detection (TASK-008) | `langdetect` | detects the observed language of an article's normalized text (`Article.language`), seeded so that detection is deterministic | — |
 | Content extraction from pages without RSS | `beautifulsoup4` + `lxml` — **proposed, not yet adopted** (no HTML collector is implemented) | necessary for the HTML scraping envisaged by PRD §6 | none |
 | Title deduplication/clustering | `rapidfuzz` — **historical proposal, not adopted** (see §4.1/§4.1a) | originally proposed for fuzzy title matching | TASK-012 implemented clustering as deterministic exact-match on a normalized title; no fuzzy-matching dependency is used |
-| CLI | `typer` (proposed) | typed signature consistent with CLAUDE.md §8; `argparse` stdlib is the zero-dependency alternative | `argparse` |
+| CLI | `typer` (adopted, TASK-023) | typed signature consistent with CLAUDE.md §8; approved over the zero-dependency `argparse` alternative during TASK-023 FASE 0 -- see §4.13 | `argparse` |
 | Typed data validation (config, models, LLM I/O) | `pydantic` | validates settings, `sources.yaml`, `config/labels.yaml`, database models, and the LLM request/response and summarization models; LLM output is plain text parsed by the consuming stage, not JSON (see §4.8) | dataclasses + manual validation |
 | Lint | `ruff` | lint + formatting in a single tool | `flake8`+`black`+`isort` (more dependencies) |
 | Type checking | `mypy` | explicitly required as a gate (PRD §35) | — |
@@ -84,10 +84,11 @@ Implementation status (up to TASK-022):
 | EDITORIAL ASSEMBLY | `app/editorial/` | implemented: `event_editorial.py` (TASK-019) assembles one event's `EditorialContent` per language; `edition.py` (TASK-020) composes an in-memory `Edition` from several `EditorialContent` (Top Stories, the nine category sections, What to Watch), see §4.6; `category`, `importance_score` and `future_date` are caller-supplied, since CLASSIFY and future-event extraction are not implemented |
 | PDF | `app/newspaper/renderer.py` | implemented (TASK-021), pure, in-memory, see §4.11; renders an already-composed `Edition` to PDF bytes -- no persistence |
 | SOURCE CITATIONS (not in the original mapping) | `app/newspaper/renderer.py` | implemented (TASK-022), pure, in-memory, see §4.12; renders `EditorialContent.articles` as a per-story citation sub-block |
-| ORCHESTRATION | — | not implemented |
+| ORCHESTRATION | — | not implemented; TASK-023's `app/cli/` is a thin command layer, not the pipeline orchestrator this row refers to (see §4.13) |
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
 | DATA ACCESS | `app/database/` | connection, numbered SQL migrations, and models/repositories for `Source`, `Article`, `Event` (TASK-004, TASK-005, TASK-007, TASK-011) |
+| CLI (not in the original mapping) | `app/cli/` | implemented (TASK-023), see §4.13; wires `collect`/`process` to already-implemented stages, `generate`/`run` are explicit stubs |
 
 Key architectural point (detailed in §5): the pipeline splits into an **analysis phase** (Collect → Rank), entirely **language-independent**, and a **generation phase** (Summarize → PDF), **language-dependent**. This split is not visible in the folder structure but in the behavior of the individual modules.
 
@@ -406,6 +407,27 @@ _build_citations_block(articles: tuple[ArticleContext, ...], language: str) -> l
 - **Test impact.** `tests/test_newspaper_renderer.py`'s `test_render_edition_never_renders_source_citations`, which asserted the pre-TASK-022 absence of citation rendering, was replaced by `test_render_edition_renders_source_citations` asserting the current (positive) behavior; a new `test_render_edition_never_renders_article_excerpt` preserves the still-true boundary that `.excerpt` is never reader-facing.
 - **Persistence: none.** Pure, in-memory, consistent with every other stage in this module (MODEL B, §4.7).
 
+### 4.13 CLI (TASK-023)
+
+`app/cli/main.py` implements the `ai-daily` command (docs/PRD.md §32) with `typer` (§1.2), exposed via `[project.scripts]` in `pyproject.toml` (`ai-daily = "app.cli.main:app"`).
+
+```
+ai-daily collect   load_settings -> get_connection -> run_migrations
+                   -> load_sources_config -> sync_sources -> RssCollector.collect_all
+ai-daily process   load_settings -> get_connection -> run_migrations
+                   -> normalize_pending_articles -> deduplicate_pending_articles
+ai-daily generate  stub -- exit code 1, no DB connection opened
+ai-daily run       stub -- exit code 1, no DB connection opened
+```
+
+- **Thin orchestration layer, not the pipeline orchestrator.** `collect` and `process` call the already-implemented, already-tested batch entry points (`RssCollector.collect_all` TASK-007, `normalize_pending_articles` TASK-008, `deduplicate_pending_articles` TASK-009) directly; no new domain logic was added anywhere outside `app/cli/`. This is not the `ORCHESTRATION`/`app/pipeline/` row of the §2 table: that row remains "not implemented" and refers to the future cluster→verify→classify→rank→`Event` persistence wiring (§4.7), which `app/cli/` does not attempt.
+- **`generate`/`run` are deliberate stubs**, not a partial implementation. Both are registered `typer` commands (so `ai-daily --help` already shows the full PRD §32 surface) but exit immediately with a non-zero exit code and a message pointing to TASK-024 ("Full pipeline"); neither opens a database connection, loads `Settings`, nor calls any stage. This boundary exists because the stages they would need -- CLASSIFY, `Event`/`event_content` persistence integration, editorial assembly wired to real data, PDF rendering wired to a persisted `Edition` -- are undecided/unimplemented (§4.7, ambiguities #8-#9 in §6) and are TASK-024's scope, not TASK-023's (CLAUDE.md §2, one task at a time).
+- **Bootstrap.** Every command runs through one `@app.callback()` (`main()`) that calls `configure_logging()` (TASK-003) exactly once before the command body executes. `collect`/`process` additionally call `load_settings()` (TASK-002) and open one `sqlite3.Connection` per invocation via `get_connection`/`run_migrations`, closed in a `finally` block.
+- **Error handling.** `ConfigurationError`, `sqlite3.Error` and `OSError` -- the anticipated critical/infrastructure failure modes (a missing/invalid `config/sources.yaml`, an unreadable database) -- are caught in `collect`/`process`, reported with a one-line message on stderr, and turned into `typer.Exit(code=1)`. Any other exception is treated as an unanticipated programming error and is left to propagate with its traceback, consistent with CLAUDE.md §32 ("do not hide errors"); no blanket `except Exception` is used. Per-source failures inside `collect` (a single feed down or malformed) are unaffected: they remain `RssCollector`'s existing resilience behavior (TASK-007) and are reported in the command's summary line, not as a command failure.
+- **No new CLI options.** Neither command takes flags yet (e.g. no `--language`, no `--sources-file`): TASK-023 FASE 0 deliberately scoped out speculative options, since `generate`/`run` -- the commands that would consume `--language` (§5.1) -- are stubs.
+- **Testing.** `tests/test_cli.py` uses `typer.testing.CliRunner` against the real `app` object. Because `collect` and `process` each open their own `sqlite3.Connection` per `CliRunner.invoke()` call, tests use a file-based SQLite database (via `DATABASE_URL`) in a temporary, `monkeypatch.chdir`-isolated working directory with its own `config/sources.yaml`, rather than `sqlite:///:memory:` (which does not persist across separate connections/invocations the way the shared-fixture-connection pattern in `tests/test_rss_collector.py` does). HTTP is mocked with `responses`, already a dev dependency.
+- **Persistence.** `collect`/`process` persist through the same repositories their underlying stages already use (`ArticleRepository`, `SourceRepository`); `app/cli/` itself contains no SQL and no new database schema.
+
 ---
 
 ## 5. Localization (replaces the previous open ambiguity about language)
@@ -415,7 +437,7 @@ Reference: PRD §38.
 ### 5.1 Language configuration
 
 - The language is **neither global nor hardcoded**: it is a parameter passed explicitly per run/edition.
-- CLI (planned, not implemented yet): `ai-daily generate --language it` (or `en`); if omitted, a configured default is used (`.env` → `DEFAULT_LANGUAGE=it`, already read and validated by `Settings` in `app/config/settings.py`).
+- CLI (planned, not implemented yet: `ai-daily` exists since TASK-023, §4.13, but `generate` is a stub with no `--language` option yet -- see §4.13): `ai-daily generate --language it` (or `en`); if omitted, a configured default is used (`.env` → `DEFAULT_LANGUAGE=it`, already read and validated by `Settings` in `app/config/settings.py`). This option will be added once `generate` has a real implementation (TASK-024).
 - Languages supported in the MVP: `it`, `en` — defined as a constant in code (`SUPPORTED_LANGUAGES = ("it", "en")` in `app/config/settings.py`); no dedicated configuration file is needed just for this (CLAUDE.md §5/§37: avoid unnecessary structures for a two-item list).
 - To produce both editions for the same day, generation is invoked twice (once per language), reusing the same already-analyzed `Event` rows: **`ai-daily run` operates on one language per invocation**; producing both languages is a choice made by the external orchestration (e.g. a GitHub Actions workflow with two steps), not by the CLI itself. This decision was made for simplicity and to isolate failures per language; it is reversible (see ambiguity §6).
 
@@ -446,7 +468,7 @@ Reference: PRD §38.
 | `app/verification/` (VERIFY implemented by TASK-017, §4.3a; hedging-language detection not implemented) | VERIFY itself is **not impacted** (language-neutral); the uncertainty-detection patterns of the future hedging detection must be defined for both languages |
 | `app/editorial/` | Top Stories/What to Watch selection reads `EventContent` in the edition's language; resolves labels from `config/labels.yaml` |
 | `app/newspaper/` (PDF) | templates and typography must handle text in both languages (variable string length, potential text direction if non-Latin languages are added in the future) |
-| CLI (`app/pipeline/`) | new `--language` parameter on `generate`/`run` |
+| CLI (`app/cli/`, TASK-023, §4.13) | `collect`/`process` are language-neutral (unaffected); a future `--language` parameter on `generate`/`run` is pending those commands' real implementation (TASK-024) |
 | `config/labels.yaml` (new file) | section labels for `it`/`en` |
 | `.env.example` | new `DEFAULT_LANGUAGE` variable |
 | Collectors, Normalize, Filter, Dedup, Cluster, Verify, Classify, Rank | **not impacted** — remain upstream of the language split |
