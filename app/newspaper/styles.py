@@ -88,6 +88,15 @@ SUB_BLOCK_BODY = ParagraphStyle(
     spaceAfter=2,
 )
 
+CITATION_TEXT = ParagraphStyle(
+    name="CitationText",
+    fontName=_BODY_FONT,
+    fontSize=8.5,
+    leading=11,
+    leftIndent=12,
+    spaceAfter=1,
+)
+
 FOOTER_TEXT = ParagraphStyle(
     name="FooterText",
     fontName=_BODY_FONT,

@@ -10,12 +10,23 @@ redone here (approved TASK-021 scope; the D-005 boundary recorded in
 `app/editorial/edition.py` -- rendering is this module's job, not
 editorial assembly's).
 
-Explicitly out of scope (approved TASK-021 decisions): citation/source
-formatting (TASK-022's job -- `EditorialContent.articles` is never read
-here), persistence, CLI/pipeline orchestration, any `Research` section (no
-upstream model produces one), and any visible `verification_status`
-indicator (the wording already produced by earlier stages carries the
-required caution; no badge, color or label is added here).
+Explicitly out of scope (approved TASK-021 decisions): persistence,
+CLI/pipeline orchestration, any `Research` section (no upstream model
+produces one), and any visible `verification_status` indicator (the
+wording already produced by earlier stages carries the required caution;
+no badge, color or label is added here).
+
+Source citations (TASK-022): `EditorialContent.articles` is rendered as a
+per-story citation sub-block (`_build_citations_block`) -- one line per
+article, in the order already given by `EditorialContent`, with no
+deduplication or reordering. Only `source_name`, `published_at` (when not
+`None`) and `url` are shown; `.title` and `.excerpt` are never rendered
+(CLAUDE.md §18, docs/PRD.md §41 -- a citation is a factual reference, not
+a repeated or quoted piece of AI-generated text). `url` and `source_name`
+are untrusted, caller-supplied data (CLAUDE.md §10-11): an absolute
+`http(s)` `url` is rendered as a ReportLab `<link>` hyperlink with its
+`href` escaped via `xml.sax.saxutils.quoteattr`; any other `url` renders as
+plain escaped text, never as a link, and never raises.
 
 Layout: single-column A4 with uniform ~2cm margins (approved decision --
 the PRD asks for a newspaper look, not a multi-column grid). Page 1 is the
@@ -34,7 +45,7 @@ import io
 from collections.abc import Callable
 from datetime import date
 from functools import lru_cache
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from pydantic import BaseModel, ConfigDict, Field
 from reportlab.pdfbase.pdfdoc import PDFError
@@ -53,6 +64,7 @@ from reportlab.platypus.doctemplate import LayoutError
 
 from app.ai.concept_explainer import ConceptExplanation
 from app.ai.developer_impact import DeveloperImpact
+from app.ai.event_summarizer import ArticleContext
 from app.config.labels import Labels, load_labels
 from app.editorial.edition import Edition, EditionSection
 from app.editorial.event_editorial import EditorialContent
@@ -210,6 +222,61 @@ def _build_concept_explanation_block(explanation: ConceptExplanation) -> list[Fl
     return blocks
 
 
+def _is_renderable_link(url: str) -> bool:
+    """Return whether `url` is safe to render as a clickable hyperlink.
+
+    Only an absolute `http`/`https` URL is linked; anything else (a
+    relative path, another scheme, or malformed text) renders as plain
+    text instead. `url` is untrusted, caller-supplied data (CLAUDE.md
+    §10-11), so this check must never raise on any input string.
+    """
+    return url.startswith("http://") or url.startswith("https://")
+
+
+def _build_citation_line(article: ArticleContext) -> str:
+    """Format one article as a single citation line (TASK-022).
+
+    Shows `source_name`, `published_at` (only when not `None`, exactly as
+    supplied -- no date parsing or reformatting) and `url`. `.title` and
+    `.excerpt` are never included (docs/PRD.md §41, CLAUDE.md §18).
+
+    `source_name` and `url` are untrusted data: the visible text is
+    escaped with `_escape`, and a renderable `url` is additionally wrapped
+    in a ReportLab `<link>` tag whose `href` is escaped with `quoteattr`,
+    so `&`, `"` or `<` in either value can never break Paragraph's markup
+    parsing or inject new markup.
+    """
+    parts = [_escape(article.source_name)]
+    if article.published_at is not None:
+        parts.append(_escape(article.published_at))
+    if _is_renderable_link(article.url):
+        parts.append(f"<link href={quoteattr(article.url)}>{_escape(article.url)}</link>")
+    else:
+        parts.append(_escape(article.url))
+    return "- " + " - ".join(parts)
+
+
+def _build_citations_block(
+    articles: tuple[ArticleContext, ...], language: str
+) -> list[Flowable]:
+    """Render the source citation sub-block: one line per article (TASK-022).
+
+    Preserves `articles`' order exactly, with no deduplication, reordering
+    or aggregation. Returns `[]` when `articles` is empty -- no heading
+    with nothing under it, mirroring the Developer Impact / AI Senza
+    Sbatti sub-blocks.
+    """
+    if not articles:
+        return []
+    heading = Paragraph(
+        _escape(_section_labels().get("sources", language)), styles.CITATION_TEXT
+    )
+    lines = [
+        Paragraph(_build_citation_line(article), styles.CITATION_TEXT) for article in articles
+    ]
+    return [_thin_rule(), heading, *lines]
+
+
 def _build_story_block(content: EditorialContent) -> Flowable:
     """Render one event's title, summary and any optional sub-blocks.
 
@@ -226,6 +293,7 @@ def _build_story_block(content: EditorialContent) -> Flowable:
         blocks.extend(_build_developer_impact_block(content.developer_impact))
     if content.concept_explanation is not None:
         blocks.extend(_build_concept_explanation_block(content.concept_explanation))
+    blocks.extend(_build_citations_block(content.articles, content.language))
     return KeepTogether(blocks)
 
 

@@ -399,15 +399,224 @@ def test_render_edition_omits_concept_explanation_when_none() -> None:
     assert "checking a book" not in text
 
 
-def test_render_edition_never_renders_source_citations() -> None:
+def test_render_edition_renders_source_citations() -> None:
     article = _article(source_name="A Very Unique Publisher Name", url="https://unique.example")
     event = _event(content=_content(articles=(article,)))
     edition = assemble_edition(language="en", events=[event], max_top_stories=5)
 
     text = _extract_text(render_edition(edition, metadata=_metadata()))
 
-    assert "A Very Unique Publisher Name" not in text
-    assert "unique.example" not in text
+    assert "A Very Unique Publisher Name" in text
+    assert "unique.example" in text
+
+
+def test_render_edition_renders_citation_for_every_article() -> None:
+    articles = (
+        _article(source_name="Reuters", url="https://example.com/1"),
+        _article(source_name="TechCrunch", url="https://example.com/2"),
+        _article(source_name="The Verge", url="https://example.com/3"),
+    )
+    event = _event(content=_content(articles=articles))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert "Reuters" in text
+    assert "example.com/1" in text
+    assert "TechCrunch" in text
+    assert "example.com/2" in text
+    assert "The Verge" in text
+    assert "example.com/3" in text
+
+
+def test_render_edition_preserves_citation_order() -> None:
+    articles = (
+        _article(source_name="First Publisher", url="https://example.com/first"),
+        _article(source_name="Second Publisher", url="https://example.com/second"),
+        _article(source_name="Third Publisher", url="https://example.com/third"),
+    )
+    event = _event(content=_content(articles=articles))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    first_pos = text.index("First Publisher")
+    second_pos = text.index("Second Publisher")
+    third_pos = text.index("Third Publisher")
+    assert first_pos < second_pos < third_pos
+
+
+def test_render_edition_does_not_deduplicate_citations() -> None:
+    articles = (
+        _article(source_name="Same Publisher", url="https://example.com/article-a"),
+        _article(source_name="Same Publisher", url="https://example.com/article-b"),
+    )
+    event = _event(content=_content(articles=articles))
+    # max_top_stories=0 keeps the event out of Top Stories, so it (and its
+    # citations) is rendered exactly once, in its category section only --
+    # Top Stories and category sections are non-exclusive views over the
+    # same events (app.editorial.edition.assemble_edition), unrelated to
+    # citation rendering; this isolates the dedup assertion from that.
+    edition = assemble_edition(language="en", events=[event], max_top_stories=0)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert text.count("Same Publisher") == 2
+    assert "example.com/article-a" in text
+    assert "example.com/article-b" in text
+
+
+def _extract_link_uris(pdf_bytes: bytes) -> list[str]:
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    uris: list[str] = []
+    for page in reader.pages:
+        annotations = page.get("/Annots")
+        if not annotations:
+            continue
+        for annot_ref in annotations:
+            annotation = annot_ref.get_object()
+            action = annotation.get("/A")
+            if action and "/URI" in action:
+                uris.append(str(action["/URI"]))
+    return uris
+
+
+def test_render_edition_hyperlinks_http_url() -> None:
+    article = _article(url="https://example.com/hyperlinked-story")
+    event = _event(content=_content(articles=(article,)))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    result = render_edition(edition, metadata=_metadata())
+
+    assert "https://example.com/hyperlinked-story" in _extract_link_uris(result)
+
+
+def test_render_edition_uses_plain_text_for_non_http_url() -> None:
+    article = _article(url="ftp://example.com/not-a-web-link")
+    event = _event(content=_content(articles=(article,)))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    result = render_edition(edition, metadata=_metadata())
+    text = _extract_text(result)
+
+    assert "ftp://example.com/not-a-web-link" in text
+    assert _extract_link_uris(result) == []
+
+
+def test_render_edition_escapes_special_characters_in_url() -> None:
+    url = 'https://example.com/x?a=1&b="q"<tag>'
+    article = _article(url=url)
+    event = _event(content=_content(articles=(article,)))
+    # max_top_stories=0 keeps the event out of Top Stories, so it (and its
+    # citation annotation) is rendered exactly once, in its category
+    # section only -- see test_render_edition_does_not_deduplicate_citations
+    # for why this is needed (Top Stories and category sections are
+    # non-exclusive views over the same events).
+    edition = assemble_edition(language="en", events=[event], max_top_stories=0)
+
+    result = render_edition(edition, metadata=_metadata())
+    text = _extract_text(result)
+
+    # No exception was raised getting here, and the PDF is well-formed
+    # (parseable by pypdf below, in both _extract_text and
+    # _extract_link_uris) -- markup injection would have broken one of
+    # these, not merely left a character out of the visible text.
+    assert result.startswith(b"%PDF-")
+    assert "&" in text
+    assert '"' in text
+    assert "<" in text
+
+    # The href actually carried by the PDF's /URI annotation must be the
+    # exact, unmangled original URL -- proving `quoteattr` escaped the
+    # attribute correctly (round-trip), not merely that the visible text
+    # happens to contain the right characters somewhere.
+    assert _extract_link_uris(result) == [url]
+
+
+def test_render_edition_renders_sources_heading_english() -> None:
+    event = _event(content=_content())
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert _LABELS.get("sources", "en") in text
+
+
+def test_render_edition_renders_sources_heading_italian() -> None:
+    content = _content(
+        language="it",
+        title="Titolo",
+        summary="Riassunto.",
+    )
+    event = _event(content=content)
+    edition = assemble_edition(language="it", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert _LABELS.get("sources", "it") in text
+
+
+def test_render_edition_omits_citations_when_no_articles() -> None:
+    event = _event(content=_content(articles=()))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert _LABELS.get("sources", "en") not in text
+
+
+def test_render_edition_shows_published_at_when_present() -> None:
+    article = _article(published_at="2026-09-14T10:00:00Z")
+    event = _event(content=_content(articles=(article,)))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert "2026-09-14T10:00:00Z" in text
+
+
+def test_render_edition_omits_published_at_when_none() -> None:
+    article = _article(published_at=None)
+    event = _event(content=_content(articles=(article,)))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert "None" not in text
+
+
+def test_render_edition_never_renders_article_excerpt() -> None:
+    article = _article(excerpt="A Very Unique Excerpt That Must Never Be Shown To Readers")
+    event = _event(content=_content(articles=(article,)))
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    assert "A Very Unique Excerpt That Must Never Be Shown To Readers" not in text
+
+
+def test_render_edition_places_citations_after_summary_and_subblocks() -> None:
+    article = _article(source_name="A Very Unique Trailing Citation Publisher")
+    content = _content(
+        summary="A very unique summary sentence for ordering.",
+        developer_impact=_developer_impact(
+            impact_summary="A very unique developer impact sentence."
+        ),
+        concept_explanation=_concept_explanation(
+            simple_explanation="A very unique concept explanation sentence."
+        ),
+        articles=(article,),
+    )
+    event = _event(content=content)
+    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+
+    text = _extract_text(render_edition(edition, metadata=_metadata()))
+
+    summary_pos = text.index("A very unique summary sentence for ordering.")
+    developer_impact_pos = text.index("A very unique developer impact sentence.")
+    concept_explanation_pos = text.index("A very unique concept explanation sentence.")
+    citation_pos = text.index("A Very Unique Trailing Citation Publisher")
+    assert summary_pos < developer_impact_pos < concept_explanation_pos < citation_pos
 
 
 def test_render_edition_never_renders_verification_status_text() -> None:
