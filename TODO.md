@@ -47,3 +47,7 @@
 
 - [ ] TASK-026 — Telegram
 - [ ] TASK-027 — Archive
+
+## Milestone 8 — Pipeline Quality
+
+- [x] TASK-028 — Freshness & Date Window
