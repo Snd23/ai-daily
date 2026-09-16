@@ -32,7 +32,7 @@ import anthropic
 from app.llm.errors import LLMProviderError
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Message, Usage
 
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 1024
 
 
