@@ -26,6 +26,7 @@ client is injected to test this module without any network call.
 from __future__ import annotations
 
 import openai
+from openai.types.chat import ChatCompletionMessageParam
 
 from app.llm.errors import LLMProviderError
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Usage
@@ -41,7 +42,7 @@ class OpenAIProvider(LLMProvider):
         self._model = model
 
     def complete(self, request: CompletionRequest) -> CompletionResponse:
-        openai_messages: list[openai.types.chat.ChatCompletionMessageParam] = [
+        openai_messages: list[ChatCompletionMessageParam] = [
             {"role": message.role, "content": message.content}  # type: ignore[misc]
             for message in request.messages
         ]
