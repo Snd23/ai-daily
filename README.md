@@ -58,9 +58,9 @@ Implemented so far, as standalone and tested modules that are not yet connected 
 - event clustering, deterministic event verification and deterministic importance ranking;
 - the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
 - in-memory editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch), not yet persisted;
-- PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers) as in-memory bytes — no citation/source formatting (planned for a later task), no file writing and no persistence.
+- PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations) as in-memory bytes — no file writing and no persistence.
 
-Not implemented yet: filtering, hedging-language detection, classification, concept selection, citation/source formatting, CLI and automation.
+Not implemented yet: filtering, hedging-language detection, classification, concept selection, CLI and automation.
 
 ## Language
 

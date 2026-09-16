@@ -2,7 +2,7 @@
 
 Technical architecture proposal for the MVP, derived from [PRD.md](./PRD.md) and constrained by the rules in [../CLAUDE.md](../CLAUDE.md).
 
-Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-021, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10, §4.11); superseded or not adopted proposals are kept and marked as historical.
+Status: **originally written as the MVP proposal; partially implemented (TASK-001 → TASK-022, see [../TODO.md](../TODO.md) for task status).** Where a component has been implemented, its section records the actual implementation (§2.1a, §4.1a, §4.2a, §4.3a, §4.8, §4.9, §4.10, §4.11, §4.12); superseded or not adopted proposals are kept and marked as historical.
 
 ---
 
@@ -47,7 +47,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 
 ## 2. Module architecture
 
-Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-021 follows the block):
+Follows the folder structure from PRD §21. Original pipeline → module mapping (proposal; the implementation status up to TASK-022 follows the block):
 
 ```
 COLLECT              → app/collectors/       (RssCollector, ApiCollector, HtmlCollector)
@@ -66,7 +66,7 @@ ORCHESTRATION         → app/pipeline/          (stage wiring, used by the CLI)
 DATA ACCESS           → app/database/          (connection, migrations, repositories)
 ```
 
-Implementation status (up to TASK-021):
+Implementation status (up to TASK-022):
 
 | Stage / concern | Actual module | Status |
 |---|---|---|
@@ -82,7 +82,8 @@ Implementation status (up to TASK-021):
 | AI EXPLANATION | `app/ai/concept_explainer.py` | implemented (TASK-016), in-memory, see §4.9; concept selection and technical-definition curation/validation are not part of it |
 | DEVELOPER IMPACT (not in the original mapping) | `app/ai/developer_impact.py` | implemented (TASK-018), in-memory, one LLM call, see §4.10; not persisted |
 | EDITORIAL ASSEMBLY | `app/editorial/` | implemented: `event_editorial.py` (TASK-019) assembles one event's `EditorialContent` per language; `edition.py` (TASK-020) composes an in-memory `Edition` from several `EditorialContent` (Top Stories, the nine category sections, What to Watch), see §4.6; `category`, `importance_score` and `future_date` are caller-supplied, since CLASSIFY and future-event extraction are not implemented |
-| PDF | `app/newspaper/renderer.py` | implemented (TASK-021), pure, in-memory, see §4.11; renders an already-composed `Edition` to PDF bytes -- no citation formatting, no persistence |
+| PDF | `app/newspaper/renderer.py` | implemented (TASK-021), pure, in-memory, see §4.11; renders an already-composed `Edition` to PDF bytes -- no persistence |
+| SOURCE CITATIONS (not in the original mapping) | `app/newspaper/renderer.py` | implemented (TASK-022), pure, in-memory, see §4.12; renders `EditorialContent.articles` as a per-story citation sub-block |
 | ORCHESTRATION | — | not implemented |
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
@@ -380,10 +381,30 @@ NewspaperMetadata   edition_number (>=1), edition_date
 - **Layout.** Single-column A4, ~2cm uniform margins, Times-Roman/Times-Bold Base-14 fonts (page geometry and `ParagraphStyle` definitions live in `app/newspaper/styles.py`, pure data with no editorial logic). Page 1 holds the masthead (`AI DAILY`, the edition date and edition number) and Top Stories, followed by one explicit `PageBreak()`; page 2 onward flows the category sections and What to Watch using `Platypus`'s native pagination (`Paragraph`, `Spacer`, `HRFlowable`, `KeepTogether`) -- no manual page-breaking algorithm. A category section is rendered only when it has at least one entry; `section.label` is used exactly as supplied by `Edition`, never recomputed from the slug.
 - **AI SENZA SBATTI / Developer Impact.** Rendered from the data already present on `EditorialContent.developer_impact` / `.concept_explanation` (all already-generated fields, nothing invented), distinguished from the story summary purely by typography/indentation/rules -- no new semantic sub-headers were added and `config/labels.yaml` was not modified, since those sub-labels are not yet approved (docs/PRD.md §40 note). A `DeveloperImpact` whose `has_developer_impact` is `False` (a normal "no impact" outcome, docs/PRD.md §43) renders nothing.
 - **Masthead-only static strings.** The edition-number label ("Edition No. {n}" / "Edizione n. {n}"), the footer page-number label ("Page {n}" / "Pagina {n}") and the edition-date month names are small, renderer-internal strings, not a new localization structure and not an addition to `config/labels.yaml` (which has no entries for these). Section headings (Top Stories, the nine categories, What to Watch) use the existing `config/labels.yaml` values via the same `app.config.labels.load_labels()`/`Labels.get()` primitive `app.editorial.edition` already uses, memoized the same way.
-- **Not rendered (explicit scope boundary, TASK-022).** `EditorialContent.articles` (source names, URLs, publication dates, excerpts) is never read by this module: citation/source formatting is TASK-022's responsibility. No `verification_status` badge, label or color is rendered -- the wording already produced by earlier stages carries the required caution. No `Research` section exists, since no upstream model produces one.
+- **Not rendered.** No `verification_status` badge, label or color is rendered -- the wording already produced by earlier stages carries the required caution. No `Research` section exists, since no upstream model produces one. (Citation/source formatting, formerly listed here as TASK-022's responsibility, is now implemented -- see §4.12.)
 - **Error handling.** `NewspaperRenderError` (`app/newspaper/errors.py`) wraps only genuine ReportLab rendering failures raised by `SimpleDocTemplate.build()` (ReportLab's own `LayoutError` and `PDFError`), following the same wrapping pattern as `LLMProviderError` (§2.1a). A bare `except Exception` is deliberately not used, so a programming error in this module's own flowable-building code still propagates and fails tests rather than being silently reclassified as a rendering error.
 - **Unicode.** Base-14 Times-Roman/Times-Bold fonts were verified (not merely assumed) to render the full set of Italian accented characters (à, è, é, ì, ò, ù and their uppercase forms) correctly; no bundled Unicode font was needed.
 - **Persistence: none.** The function returns `bytes` only -- it never writes to a filesystem path, never opens a database connection and is never given one. Where a generated PDF is written to disk or has its path recorded (`edition.pdf_path`, §3) is not decided by this stage and remains open (§6, ambiguity #8).
+
+### 4.12 Source citations (TASK-022)
+
+`app/newspaper/renderer.py` renders `EditorialContent.articles` (§3, `ArticleContext`, TASK-015) as a per-story citation sub-block, closing the scope boundary §4.11 left open. No new module, package or model was introduced: `ArticleContext`, `EditorialContent` and `Edition` are unchanged.
+
+```
+_is_renderable_link(url: str) -> bool
+_build_citation_line(article: ArticleContext) -> str
+_build_citations_block(articles: tuple[ArticleContext, ...], language: str) -> list[Flowable]
+```
+
+- **Placement.** `_build_citations_block` is the last sub-block appended in `_build_story_block`, after the summary and any Developer Impact / AI Senza Sbatti sub-blocks, inside the same `KeepTogether` group -- a story's citations never separate from its own content across a page break.
+- **Fields.** Only `source_name`, `published_at` (rendered exactly as supplied, with no date parsing or reformatting, and omitted entirely when `None`) and `url` are shown. `ArticleContext.title` and `.excerpt` are never rendered: a citation is a factual reference, not a repetition of the article's own text or a quotation of the AI-generated summary (CLAUDE.md §18, docs/PRD.md §41).
+- **Order and duplicates.** `articles` is rendered in exactly the order already present on `EditorialContent` -- one citation line per article, with no deduplication, reordering or aggregation by publisher or URL.
+- **Empty articles.** `_build_citations_block` returns `[]` when `articles` is empty: no heading with nothing under it, mirroring the Developer Impact / AI Senza Sbatti sub-blocks (§4.11).
+- **URL handling.** `_is_renderable_link` treats an absolute `http://`/`https://` string as safe to link; anything else (a relative path, another scheme, or malformed text) renders as plain text, never as a link, and never raises. `url` and `source_name` are untrusted, caller-supplied data (CLAUDE.md §10-11): a renderable `url` is wrapped in a ReportLab `<link href="...">` tag whose `href` attribute is escaped with `xml.sax.saxutils.quoteattr` (stdlib), and the visible text of every field is escaped with the module's existing `_escape` helper, so `&`, `"` or `<` in a URL or source name can never break `Paragraph`'s markup parsing or inject new markup.
+- **Localization.** The heading uses a new `sources` key added to `config/labels.yaml` (`"Fonti:"` / `"Sources:"`), resolved the same way every other section heading already is (`app.config.labels.load_labels()`/`Labels.get()`, memoized). This key is additional to the 13 top-level section labels approved in docs/PRD.md §40 -- it is a sub-heading, not a top-level section.
+- **Styling.** A new `CITATION_TEXT` `ParagraphStyle` (`app/newspaper/styles.py`) is small (8.5pt), plain (non-italic, non-bold, `Times-Roman`), and indented to match `SUB_BLOCK_BODY` -- deliberately distinct from `SUB_BLOCK_BODY` (italic), which is the existing visual signature of AI-generated sub-content (Developer Impact, AI Senza Sbatti), so citations read as a third, factual-reference register, distinguishable from AI-generated text (CLAUDE.md §18).
+- **Test impact.** `tests/test_newspaper_renderer.py`'s `test_render_edition_never_renders_source_citations`, which asserted the pre-TASK-022 absence of citation rendering, was replaced by `test_render_edition_renders_source_citations` asserting the current (positive) behavior; a new `test_render_edition_never_renders_article_excerpt` preserves the still-true boundary that `.excerpt` is never reader-facing.
+- **Persistence: none.** Pure, in-memory, consistent with every other stage in this module (MODEL B, §4.7).
 
 ---
 
