@@ -67,6 +67,22 @@ class EventRepository:
         ).fetchone()
         return _from_row(row) if row is not None else None
 
+    def list_by_created_date(self, date: str) -> list[Event]:
+        """Return every `Event` created on `date` (an ISO `YYYY-MM-DD` day), by `id`.
+
+        `created_at` is stored as a full ISO-8601 timestamp, so the day is
+        matched on its first ten characters. This is the selection one
+        day's edition is composed from (TASK-024): it includes events
+        created by an earlier run of the same day, which is what makes
+        re-running generation reproduce the same edition rather than an
+        empty one (docs/ARCHITECTURE.md §4.14).
+        """
+        rows = self._connection.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM event WHERE substr(created_at, 1, 10) = ? ORDER BY id",
+            (date,),
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
 
 def _from_row(row: Any) -> Event:
     # `sqlite3.Cursor.fetchone` is typed `Any` by typeshed (a plain tuple at

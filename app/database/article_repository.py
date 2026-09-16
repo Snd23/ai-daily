@@ -306,6 +306,87 @@ class ArticleRepository:
             result.setdefault(canonical_id, []).append(pending_id)
         return result
 
+    def list_clusterable(self) -> list[Article]:
+        """Return every `Article` ready to be clustered into an `Event` (TASK-024).
+
+        A clusterable article has `status = 'pending'` (so it has not
+        already been assigned to an `Event` by a previous run, and was not
+        discarded as a duplicate by TASK-009), a non-empty `content_hash`
+        (so TASK-008's normalization has run on it) and no `event_id` yet.
+        Ordered by `id`, so clustering is independent of storage order.
+
+        This selection is what makes generation rerun-safe: `assign_event`
+        moves an article out of `'pending'`, so a second run finds nothing
+        left to cluster and creates no duplicate `Event`
+        (docs/ARCHITECTURE.md §4.14).
+        """
+        rows = self._connection.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS} FROM article
+            WHERE status = 'pending'
+              AND event_id IS NULL
+              AND content_hash IS NOT NULL AND content_hash != ''
+            ORDER BY id
+            """
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
+    def list_by_event(self, event_id: int) -> list[Article]:
+        """Return every `Article` assigned to `event_id`, ordered by `id`."""
+        rows = self._connection.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM article WHERE event_id = ? ORDER BY id",
+            (event_id,),
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
+    def assign_event(self, event_id: int, article_ids: Sequence[int]) -> None:
+        """Attach every article in `article_ids` to `event_id` (TASK-024).
+
+        Runs as a single atomic transaction, mirroring `mark_duplicates`:
+        every row is set to `event_id = :event_id, status = 'processed'`,
+        or none of them are. `'processed'` is what takes these articles out
+        of `list_clusterable`'s selection, so an article can never be
+        clustered into a second `Event` by a later run.
+
+        Args:
+            event_id: id of the already-persisted `Event`.
+            article_ids: ids of the `Article` rows forming that event. Must
+                be non-empty and must not contain repeated ids.
+
+        Raises:
+            ValueError: if `article_ids` is empty or contains a repeated id
+                -- checked before any write. Also raised, after a rollback,
+                if any id does not exist or is no longer `'pending'`.
+            sqlite3.Error: propagated after a rollback for any underlying
+                database failure.
+        """
+        if not article_ids:
+            raise ValueError("article_ids must not be empty")
+        if len(set(article_ids)) != len(article_ids):
+            raise ValueError(f"article_ids must not contain repeated ids: {article_ids!r}")
+
+        try:
+            placeholders = ", ".join("?" for _ in article_ids)
+            cursor = self._connection.execute(
+                f"""
+                UPDATE article
+                SET event_id = ?, status = 'processed'
+                WHERE id IN ({placeholders}) AND status = 'pending'
+                """,
+                (event_id, *article_ids),
+            )
+            if cursor.rowcount != len(article_ids):
+                raise ValueError(
+                    f"Expected to attach {len(article_ids)} article(s) to event "
+                    f"id={event_id}, but only {cursor.rowcount} row(s) matched "
+                    f"(an article id may not exist or may no longer be 'pending')"
+                )
+        except BaseException:
+            self._connection.rollback()
+            raise
+        else:
+            self._connection.commit()
+
 
 def _from_row(row: Any) -> Article:
     # `sqlite3.Cursor.fetchone` is typed `Any` by typeshed (a plain tuple at

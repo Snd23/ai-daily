@@ -1,20 +1,20 @@
 """`ai-daily` command-line interface (TASK-023).
 
-Implements the command surface planned by docs/PRD.md §32
+Implements the command surface of docs/PRD.md §32
 (`collect` / `process` / `generate` / `run`), wired to the already-existing,
 already-tested pipeline stages:
 
-    collect  -> load_sources_config + sync_sources + RssCollector.collect_all
-    process  -> normalize_pending_articles + deduplicate_pending_articles
+    collect   -> load_sources_config + sync_sources + RssCollector.collect_all
+    process   -> normalize_pending_articles + deduplicate_pending_articles
+    generate  -> app.pipeline.generate_edition (TASK-024)
+    run       -> collect, then process, then generate
 
-`generate` and `run` are deliberate stubs: the stages they would need
-(CLASSIFY, `Event`/`event_content` persistence integration, editorial
-assembly wired to real data, PDF rendering wired to a persisted `Edition`)
-are not implemented yet (docs/ARCHITECTURE.md §4.7, ambiguities #8/#9 in
-§6) and are explicitly out of scope for this task -- see TODO.md,
-TASK-024 ("Full pipeline"). They exist as commands (so the CLI surface
-already matches PRD §32) but do no work and never reach a database
-connection or any downstream stage.
+This module stays a thin adapter (docs/ARCHITECTURE.md §4.13): it loads
+settings, opens one connection per invocation, builds the LLM provider and
+reports results. Stage sequencing and every domain decision live in
+`app/pipeline/` (§4.14), not here -- `run` simply calls the other three
+command functions in order, so it duplicates none of their wiring and
+stops at the first one that fails.
 
 Every command shares one bootstrap: `configure_logging()` runs once, in
 the app-level Typer callback, before any command body executes.
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from pathlib import Path
 
 import typer
 
@@ -31,16 +32,23 @@ from app.collectors.rss import RssCollector
 from app.config import (
     DEFAULT_SOURCES_PATH,
     ConfigurationError,
+    Settings,
     load_settings,
     load_sources_config,
     sync_sources,
 )
+from app.config.settings import SUPPORTED_LANGUAGES
 from app.database import ArticleRepository, SourceRepository, get_connection, run_migrations
 from app.deduplication import deduplicate_pending_articles
+from app.llm import create_llm_provider
 from app.logging_config import configure_logging
 from app.normalization import normalize_pending_articles
+from app.pipeline import generate_edition
 
 logger = logging.getLogger(__name__)
+
+_SQLITE_URL_PREFIX = "sqlite:///"
+_EDITIONS_DIRNAME = "editions"
 
 app = typer.Typer(
     name="ai-daily",
@@ -55,12 +63,19 @@ app = typer.Typer(
 # propagate, per CLAUDE.md §32 ("do not hide errors").
 _CRITICAL_ERRORS = (ConfigurationError, sqlite3.Error, OSError)
 
-_NOT_IMPLEMENTED_MESSAGE = (
-    "'{command}' is not implemented yet: the full pipeline (clustering, "
-    "verification, ranking, summarization, editorial assembly and PDF "
-    "rendering wired end-to-end) is TASK-024, not TASK-023. "
-    "See TODO.md and docs/ARCHITECTURE.md (sections 4.7 and 6)."
-)
+def _editions_dir(settings: Settings) -> Path:
+    """Return the directory generated PDFs are written to.
+
+    Derived from the already-configured `DATABASE_URL` rather than from a
+    new setting: editions live next to the database that describes them
+    (`sqlite:///data/ai_daily.db` -> `data/editions`). An in-memory
+    database has no directory of its own, so the default `data/` location
+    is used.
+    """
+    path = settings.database_url.removeprefix(_SQLITE_URL_PREFIX)
+    if path == ":memory:":
+        return Path("data") / _EDITIONS_DIRNAME
+    return Path(path).parent / _EDITIONS_DIRNAME
 
 
 @app.callback()
@@ -157,14 +172,65 @@ def process() -> None:
 
 
 @app.command()
-def generate() -> None:
-    """Generate the PDF edition -- not implemented yet (see TASK-024)."""
-    typer.echo(_NOT_IMPLEMENTED_MESSAGE.format(command="generate"), err=True)
-    raise typer.Exit(code=1)
+def generate(
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help=(
+            "Edition language "
+            f"({', '.join(SUPPORTED_LANGUAGES)}); defaults to DEFAULT_LANGUAGE."
+        ),
+    ),
+) -> None:
+    """Generate one edition from already-collected articles and write its PDF."""
+    settings = load_settings()
+    edition_language = language or settings.default_language
+    if edition_language not in SUPPORTED_LANGUAGES:
+        typer.echo(
+            f"generate failed: language must be one of {SUPPORTED_LANGUAGES}, "
+            f"got {edition_language!r}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    connection = get_connection(settings.database_url)
+    try:
+        run_migrations(connection)
+        result = generate_edition(
+            connection,
+            create_llm_provider(settings),
+            language=edition_language,
+            output_dir=_editions_dir(settings),
+        )
+    except _CRITICAL_ERRORS as exc:
+        typer.echo(f"generate failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        connection.close()
+
+    typer.echo(
+        f"Edition {result.edition_number} ({result.edition_date.isoformat()}, "
+        f"{result.language}): {result.events_in_edition} event(s), "
+        f"{result.events_created} created this run, "
+        f"{len(result.failed_events)} skipped."
+    )
+    typer.echo(f"PDF written to {result.pdf_path} ({result.pdf_bytes} bytes).")
+    for event_id, error in result.failed_events:
+        typer.echo(f"  - event {event_id}: {error}", err=True)
 
 
 @app.command()
-def run() -> None:
-    """Run the full pipeline end-to-end -- not implemented yet (see TASK-024)."""
-    typer.echo(_NOT_IMPLEMENTED_MESSAGE.format(command="run"), err=True)
-    raise typer.Exit(code=1)
+def run(
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help=(
+            "Edition language "
+            f"({', '.join(SUPPORTED_LANGUAGES)}); defaults to DEFAULT_LANGUAGE."
+        ),
+    ),
+) -> None:
+    """Run the full pipeline: collect, then process, then generate."""
+    collect()
+    process()
+    generate(language=language)

@@ -122,3 +122,23 @@ def test_future_date_round_trips_as_value(repository: EventRepository) -> None:
 
     assert fetched is not None
     assert fetched.future_date == "2026-03-01"
+
+
+def test_list_by_created_date_returns_events_of_that_day_only(
+    repository: EventRepository,
+) -> None:
+    today = repository.create(_make_event(created_at="2026-09-16T07:00:00+02:00"))
+    later_same_day = repository.create(_make_event(created_at="2026-09-16T23:59:59+02:00"))
+    repository.create(_make_event(created_at="2026-09-15T07:00:00+02:00"))
+
+    found = repository.list_by_created_date("2026-09-16")
+
+    assert [event.id for event in found] == [today.id, later_same_day.id]
+
+
+def test_list_by_created_date_returns_nothing_for_a_day_with_no_event(
+    repository: EventRepository,
+) -> None:
+    repository.create(_make_event(created_at="2026-09-15T07:00:00+02:00"))
+
+    assert repository.list_by_created_date("2026-09-16") == []

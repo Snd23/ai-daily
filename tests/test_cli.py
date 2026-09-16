@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
 
 import pytest
 import responses
 from typer.testing import CliRunner
 
+from app.cli import main as cli_main
 from app.cli.main import app
 from app.database.article import Article
 from app.database.article_repository import ArticleRepository
@@ -32,8 +34,15 @@ from app.database.connection import get_connection
 from app.database.migrations import run_migrations
 from app.database.source import Source
 from app.database.source_repository import SourceRepository
+from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider
 
 runner = CliRunner()
+
+_SUMMARY_RESPONSE = "TITLE: Example Story\nSUMMARY: Something happened on Monday."
+
+# Resolved from this file, not from the working directory: the `workspace`
+# fixture chdirs away from the repository root.
+_REPOSITORY_LABELS = Path(__file__).resolve().parent.parent / "config" / "labels.yaml"
 
 _SOURCES_YAML = """
 sources:
@@ -72,9 +81,20 @@ _RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """An isolated CWD with its own `config/sources.yaml` and `DATABASE_URL`."""
+    """An isolated CWD with its own `config/` directory and `DATABASE_URL`.
+
+    `config/labels.yaml` is copied from the repository rather than
+    rewritten here: `generate` resolves section labels through
+    `app.config.labels.load_labels`, which reads that path relative to the
+    working directory, exactly as `collect` reads `config/sources.yaml`.
+    Copying the real file keeps the test honest instead of asserting
+    against a private, drifting copy of the labels.
+    """
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "sources.yaml").write_text(_SOURCES_YAML, encoding="utf-8")
+    (tmp_path / "config" / "labels.yaml").write_text(
+        _REPOSITORY_LABELS.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "data" / "test.db"
@@ -86,6 +106,26 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     yield db_path
+
+
+@pytest.fixture
+def fake_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the CLI's provider factory so no real API client is built.
+
+    Only this one boundary is faked: `generate` still runs the real
+    clustering, verification, ranking, editorial and rendering stages
+    against the real SQLite database (they are covered end-to-end in
+    `tests/test_pipeline_generation.py`).
+    """
+
+    class _FakeProvider(LLMProvider):
+        def complete(self, request: CompletionRequest) -> CompletionResponse:
+            text = "\n".join(message.content for message in request.messages)
+            if "HAS_DEVELOPER_IMPACT" in text:
+                return CompletionResponse(text="HAS_DEVELOPER_IMPACT: no")
+            return CompletionResponse(text=_SUMMARY_RESPONSE)
+
+    monkeypatch.setattr(cli_main, "create_llm_provider", lambda settings: _FakeProvider())
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -219,25 +259,130 @@ def test_process_normalizes_and_deduplicates(workspace: Path) -> None:
         connection.close()
 
 
-# --- generate / run stubs ---------------------------------------------------
+# --- generate ---------------------------------------------------------------
 
 
-def test_generate_is_a_stub_that_fails_explicitly(workspace: Path) -> None:
+def _seed_one_article(db_path: Path) -> None:
+    """Persist one already-normalized article, ready to be clustered."""
+    connection = _connect(db_path)
+    try:
+        source = SourceRepository(connection).create(
+            Source(
+                name="Example Source",
+                type="rss",
+                url="https://example.com/feed",
+                tier=1,
+                categories=["models"],
+                reliability_weight=1.0,
+                is_active=True,
+            )
+        )
+        assert source.id is not None
+        ArticleRepository(connection).create(
+            Article(
+                source_id=source.id,
+                title="Example Story",
+                url="https://example.com/story",
+                published_at="2026-09-16T08:00:00+00:00",
+                fetched_at="2026-09-16T09:00:00+00:00",
+                raw_excerpt="<p>Something happened.</p>",
+                normalized_text="Something happened.",
+                content_hash="hash-story",
+                language="en",
+            )
+        )
+    finally:
+        connection.close()
+
+
+def test_generate_writes_a_pdf_and_reports_it(
+    workspace: Path, fake_llm_provider: None
+) -> None:
+    _seed_one_article(workspace)
+
     result = runner.invoke(app, ["generate"])
 
-    assert result.exit_code != 0
-    assert "not implemented yet" in result.output
-    assert "TASK-024" in result.output
-    assert not (workspace).exists()  # no database was ever created
+    assert result.exit_code == 0, result.output
+    assert "1 event(s)" in result.output
+    pdf_path = workspace.parent / "editions" / f"{date.today().isoformat()}-it.pdf"
+    assert pdf_path.exists()
+    assert str(pdf_path) in result.output
 
 
-def test_run_is_a_stub_that_fails_explicitly(workspace: Path) -> None:
+def test_generate_uses_the_configured_default_language(
+    workspace: Path, fake_llm_provider: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEFAULT_LANGUAGE", "en")
+    _seed_one_article(workspace)
+
+    result = runner.invoke(app, ["generate"])
+
+    assert result.exit_code == 0, result.output
+    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+
+
+def test_generate_accepts_an_explicit_language(
+    workspace: Path, fake_llm_provider: None
+) -> None:
+    _seed_one_article(workspace)
+
+    result = runner.invoke(app, ["generate", "--language", "en"])
+
+    assert result.exit_code == 0, result.output
+    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+
+
+def test_generate_rejects_an_unsupported_language(
+    workspace: Path, fake_llm_provider: None
+) -> None:
+    result = runner.invoke(app, ["generate", "--language", "fr"])
+
+    assert result.exit_code == 1
+    assert "generate failed" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_generate_reports_a_missing_api_key_cleanly(workspace: Path) -> None:
+    """No provider is patched here: the real factory must fail cleanly."""
+    result = runner.invoke(app, ["generate"])
+
+    assert result.exit_code == 1
+    assert "generate failed" in result.output
+    assert "Traceback" not in result.output
+
+
+# --- run ---------------------------------------------------------------------
+
+
+@responses.activate
+def test_run_executes_collect_process_and_generate(
+    workspace: Path, fake_llm_provider: None
+) -> None:
+    responses.add(responses.GET, "https://example.com/feed", body=_RSS_FEED, status=200)
+
+    result = runner.invoke(app, ["run", "--language", "en"])
+
+    assert result.exit_code == 0, result.output
+    # collect
+    assert "2 new article" in result.output
+    # process
+    assert "Normalized 2 article" in result.output
+    # generate
+    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+
+
+def test_run_stops_at_the_first_failing_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)  # no config/sources.yaml here
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'data' / 'db').as_posix()}")
+
     result = runner.invoke(app, ["run"])
 
-    assert result.exit_code != 0
-    assert "not implemented yet" in result.output
-    assert "TASK-024" in result.output
-    assert not (workspace).exists()  # no database was ever created
+    assert result.exit_code == 1
+    assert "collect failed" in result.output
+    # generate never ran, so no edition directory was created
+    assert not (tmp_path / "data" / "editions").exists()
 
 
 # --- error handling ----------------------------------------------------

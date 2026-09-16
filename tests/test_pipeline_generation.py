@@ -1,0 +1,571 @@
+"""Integration and end-to-end tests for `app.pipeline.generation` (TASK-024).
+
+Uses a real, file-based SQLite database and the real clustering,
+verification, ranking, category assignment, editorial and PDF-rendering
+stages: only the `LLMProvider` is a fake, since it is the one boundary
+that would otherwise make a network call. Nothing internal is mocked.
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+import sqlite3
+from collections.abc import Iterator
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pypdf import PdfReader
+
+from app.database.article import Article
+from app.database.article_repository import ArticleRepository
+from app.database.connection import get_connection
+from app.database.edition_repository import EditionRepository
+from app.database.event_content_repository import EventContentRepository
+from app.database.event_repository import EventRepository
+from app.database.migrations import run_migrations
+from app.database.source import Source
+from app.database.source_repository import SourceRepository
+from app.llm.errors import LLMProviderError
+from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Usage
+from app.pipeline import generation as generation_module
+from app.pipeline.generation import generate_edition
+
+_EDITION_DATE = date(2026, 9, 16)
+_SUMMARY_RESPONSE = "TITLE: OpenAI ships Model X\nSUMMARY: OpenAI released Model X on Monday."
+_DEVELOPER_IMPACT_RESPONSE = (
+    "HAS_DEVELOPER_IMPACT: yes\n"
+    "IMPACT_SUMMARY: A new endpoint is available.\n"
+    "TECHNICAL_AREA: api, sdk\n"
+    "BREAKING_CHANGE: no"
+)
+
+
+class _FakeLLMProvider(LLMProvider):
+    """Answers each stage with a valid canned response for its own contract."""
+
+    def __init__(
+        self,
+        *,
+        summary_response: str = _SUMMARY_RESPONSE,
+        developer_impact_response: str = _DEVELOPER_IMPACT_RESPONSE,
+        fail_with: Exception | None = None,
+    ) -> None:
+        self.summary_response = summary_response
+        self.developer_impact_response = developer_impact_response
+        self.fail_with = fail_with
+        self.requests: list[CompletionRequest] = []
+
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        self.requests.append(request)
+        if self.fail_with is not None:
+            raise self.fail_with
+        text = "\n".join(message.content for message in request.messages)
+        if "HAS_DEVELOPER_IMPACT" in text:
+            return CompletionResponse(text=self.developer_impact_response)
+        return CompletionResponse(text=self.summary_response)
+
+
+@pytest.fixture
+def connection(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    conn = get_connection(f"sqlite:///{(tmp_path / 'ai_daily.db').as_posix()}")
+    run_migrations(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def output_dir(tmp_path: Path) -> Path:
+    return tmp_path / "editions"
+
+
+def _add_source(connection: sqlite3.Connection, **overrides: Any) -> Source:
+    values: dict[str, Any] = {
+        "name": "OpenAI",
+        "type": "rss",
+        "url": "https://openai.com/feed",
+        "tier": 1,
+        "categories": ["models", "business"],
+        "reliability_weight": 1.0,
+        "is_active": True,
+    }
+    values.update(overrides)
+    return SourceRepository(connection).create(Source(**values))
+
+
+def _add_article(connection: sqlite3.Connection, source: Source, **overrides: Any) -> Article:
+    assert source.id is not None
+    values: dict[str, Any] = {
+        "source_id": source.id,
+        "title": "OpenAI ships Model X",
+        "url": "https://openai.com/news/model-x",
+        "published_at": "2026-09-16T08:00:00+00:00",
+        "fetched_at": "2026-09-16T09:00:00+00:00",
+        "raw_excerpt": "<p>OpenAI released Model X.</p>",
+        "normalized_text": "OpenAI released Model X.",
+        "content_hash": "hash-model-x",
+        "language": "en",
+    }
+    values.update(overrides)
+    return ArticleRepository(connection).create(Article(**values))
+
+
+def _seed_one_event(connection: sqlite3.Connection) -> None:
+    """One story reported by two different Tier 1/2 sources -> one VERIFIED event."""
+    openai = _add_source(connection)
+    reuters = _add_source(
+        connection,
+        name="Reuters",
+        url="https://reuters.com/feed",
+        tier=2,
+        categories=["business"],
+        reliability_weight=0.9,
+    )
+    _add_article(connection, openai)
+    _add_article(
+        connection,
+        reuters,
+        url="https://reuters.com/openai-model-x",
+        content_hash="hash-model-x-reuters",
+        raw_excerpt="<p>Reuters reports Model X.</p>",
+        normalized_text="Reuters reports Model X.",
+    )
+
+
+def _generate(
+    connection: sqlite3.Connection,
+    output_dir: Path,
+    *,
+    provider: _FakeLLMProvider | None = None,
+    language: str = "en",
+) -> Any:
+    return generate_edition(
+        connection,
+        provider or _FakeLLMProvider(),
+        language=language,
+        output_dir=output_dir,
+        edition_date=_EDITION_DATE,
+    )
+
+
+# --- analysis phase: Article -> Event ---------------------------------------
+
+
+def test_clustered_articles_become_one_event_with_real_metadata(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_created == 1
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    assert len(events) == 1
+    event = events[0]
+    # A Tier 1 source is present, so VERIFY really ran and returned VERIFIED.
+    assert event.verification_status == "VERIFIED"
+    assert 0.0 < event.confidence_score <= 10.0
+    assert 0.0 < event.importance_score <= 10.0
+    assert event.event_type == "standard"
+    # No deterministic signal identifies a future event (documented rule).
+    assert event.future_date is None
+
+
+def test_articles_are_attached_to_their_event_and_leave_the_pending_pool(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    _generate(connection, output_dir)
+
+    repository = ArticleRepository(connection)
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    event_id = events[0].id
+    assert event_id is not None
+    attached = repository.list_by_event(event_id)
+    assert len(attached) == 2
+    assert all(article.status == "processed" for article in attached)
+    assert repository.list_clusterable() == []
+
+
+def test_articles_with_different_titles_form_separate_events(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_created == 2
+
+
+def test_unnormalized_articles_are_not_clustered(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    source = _add_source(connection)
+    _add_article(connection, source, normalized_text=None, content_hash=None)
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_created == 0
+    assert result.events_in_edition == 0
+
+
+# --- generation phase: content, editorial, PDF ------------------------------
+
+
+def test_event_content_is_persisted_for_the_generated_language(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    _generate(connection, output_dir, language="en")
+
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    event_id = events[0].id
+    assert event_id is not None
+    content = EventContentRepository(connection).get(event_id, "en")
+    assert content is not None
+    assert content.title == "OpenAI ships Model X"
+    assert content.summary == "OpenAI released Model X on Monday."
+    # The Developer Impact assessment is stored as structured content.
+    assert content.structured_content is not None
+    assert "developer_impact" in content.structured_content
+
+
+def test_developer_impact_absence_is_stored_as_no_structured_content(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+    provider = _FakeLLMProvider(developer_impact_response="HAS_DEVELOPER_IMPACT: no")
+
+    _generate(connection, output_dir, provider=provider)
+
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    event_id = events[0].id
+    assert event_id is not None
+    content = EventContentRepository(connection).get(event_id, "en")
+    assert content is not None
+    assert content.structured_content is None
+
+
+def test_generate_writes_a_valid_pdf_with_the_expected_content(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    result = _generate(connection, output_dir)
+
+    assert result.pdf_path.exists()
+    assert result.pdf_path.name == "2026-09-16-en.pdf"
+    reader = PdfReader(io.BytesIO(result.pdf_path.read_bytes()))
+    assert len(reader.pages) >= 1
+    text = "\n".join(page.extract_text() for page in reader.pages)
+    assert "AI DAILY" in text
+    assert "OpenAI ships Model X" in text
+    # TASK-022 source citations must still render from real data.
+    assert "Reuters" in text
+    assert "https://reuters.com/openai-model-x" in text
+
+
+def test_the_edition_row_records_the_pdf_path(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    result = _generate(connection, output_dir)
+
+    record = EditionRepository(connection).get_by_date_and_language("2026-09-16", "en")
+    assert record is not None
+    assert record.edition_number == result.edition_number
+    assert record.pdf_path == str(result.pdf_path)
+    assert record.status == "published"
+
+
+def test_an_unverified_event_is_kept_out_of_top_stories(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    """Real VERIFY output must drive Top Stories selection (docs/PRD.md §4)."""
+    community = _add_source(
+        connection,
+        name="Reddit",
+        url="https://reddit.com/feed",
+        tier=4,
+        categories=["community"],
+        reliability_weight=0.3,
+    )
+    _add_article(connection, community, title="Rumor about Model Z")
+
+    _generate(connection, output_dir)
+
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    assert events[0].verification_status == "UNVERIFIED"
+    record = EditionRepository(connection).get_by_date_and_language("2026-09-16", "en")
+    assert record is not None  # the edition is still produced
+
+
+def test_an_empty_database_still_produces_an_edition(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    result = _generate(connection, output_dir)
+
+    assert result.events_in_edition == 0
+    assert result.pdf_path.exists()
+
+
+# --- rerun / idempotency ------------------------------------------------------
+
+
+def test_rerunning_creates_no_duplicate_event_content_or_edition(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+    provider = _FakeLLMProvider()
+
+    first = _generate(connection, output_dir, provider=provider)
+    calls_after_first = len(provider.requests)
+    second = _generate(connection, output_dir, provider=provider)
+
+    assert first.events_created == 1
+    assert second.events_created == 0
+    assert second.events_in_edition == first.events_in_edition
+    assert second.edition_number == first.edition_number
+    assert _count(connection, "event") == 1
+    assert _count(connection, "event_content") == 1
+    assert _count(connection, "edition") == 1
+    # Stored content is reused: the rerun makes no further LLM call.
+    assert len(provider.requests) == calls_after_first
+
+
+def test_rerunning_reproduces_the_same_edition_rather_than_an_empty_one(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+
+    first = _generate(connection, output_dir)
+    second = _generate(connection, output_dir)
+
+    assert second.events_in_edition == first.events_in_edition == 1
+    assert second.pdf_path == first.pdf_path
+    assert second.pdf_path.exists()
+
+
+def test_a_second_language_reuses_the_events_of_the_first(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    """The analysis phase must not be repeated per language (docs/PRD.md §38)."""
+    _seed_one_event(connection)
+
+    english = _generate(connection, output_dir, language="en")
+    italian = _generate(connection, output_dir, language="it")
+
+    assert italian.events_created == 0
+    assert _count(connection, "event") == 1
+    assert _count(connection, "event_content") == 2
+    assert italian.edition_number != english.edition_number
+    assert italian.pdf_path.name == "2026-09-16-it.pdf"
+    assert english.pdf_path.exists() and italian.pdf_path.exists()
+
+
+# --- per-event error handling -------------------------------------------------
+
+
+def test_an_event_whose_generation_fails_is_skipped_and_reported(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+    provider = _FakeLLMProvider(summary_response="not a valid response")
+
+    result = _generate(connection, output_dir, provider=provider)
+
+    assert result.events_in_edition == 0
+    assert len(result.failed_events) == 1
+    # The event itself is still persisted: only its content generation failed.
+    assert _count(connection, "event") == 1
+    assert _count(connection, "event_content") == 0
+    # Partial success: an edition is still produced (CLAUDE.md §34).
+    assert result.pdf_path.exists()
+
+
+def test_a_failing_event_does_not_prevent_the_others(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    class _FailFirstProvider(_FakeLLMProvider):
+        def complete(self, request: CompletionRequest) -> CompletionResponse:
+            text = "\n".join(message.content for message in request.messages)
+            if "Model Y" in text and "HAS_DEVELOPER_IMPACT" not in text:
+                raise LLMProviderError("provider is unavailable for this event")
+            return super().complete(request)
+
+    result = _generate(connection, output_dir, provider=_FailFirstProvider())
+
+    assert result.events_in_edition == 1
+    assert len(result.failed_events) == 1
+
+
+def test_a_database_failure_is_not_swallowed(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+    connection.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        _generate(connection, output_dir)
+
+
+def _count(connection: sqlite3.Connection, table: str) -> int:
+    row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()  # noqa: S608
+    return int(row[0])
+
+
+# --- Post-Implementation Review, Finding 2: per-cluster error isolation ----
+
+
+def test_a_cluster_whose_event_assignment_fails_is_skipped_not_crashed(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ValueError from ArticleRepository.assign_event() (e.g. a race between
+    listing clusterable articles and attaching them) must not crash the run
+    with a raw traceback, and the affected cluster must not be counted as
+    a successfully created event.
+    """
+    _seed_one_event(connection)
+
+    def _failing_assign_event(
+        self: ArticleRepository, event_id: int, article_ids: list[int]
+    ) -> None:
+        raise ValueError("simulated race: article no longer pending")
+
+    monkeypatch.setattr(ArticleRepository, "assign_event", _failing_assign_event)
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_created == 0
+    assert result.events_in_edition == 0
+    # An edition is still produced -- partial success, not total failure.
+    assert result.pdf_path.exists()
+
+
+def test_a_failing_cluster_does_not_prevent_other_clusters_from_succeeding(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    original_assign_event = ArticleRepository.assign_event
+    calls = {"count": 0}
+
+    def _fail_second_call(
+        self: ArticleRepository, event_id: int, article_ids: list[int]
+    ) -> None:
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise ValueError("simulated race on the second cluster")
+        original_assign_event(self, event_id, article_ids)
+
+    monkeypatch.setattr(ArticleRepository, "assign_event", _fail_second_call)
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_created == 1
+    assert calls["count"] == 2
+
+
+# --- Post-Implementation Review, Finding 3: edition_date consistency -------
+
+
+class _FrozenDatetime(datetime):
+    """A `datetime.now()` that always returns a fixed moment, regardless of tz."""
+
+    _frozen: datetime
+
+    @classmethod
+    def now(cls, tz: Any = None) -> datetime:
+        return cls._frozen if tz is None else cls._frozen.astimezone(tz)
+
+
+def test_events_created_are_associated_with_the_generation_edition_date(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An event analyzed during a generation for a given edition_date must be
+    found by that same generation's editorial-composition phase, even when
+    the real wall-clock date is a different day (a run straddling
+    midnight, or an explicit backfill edition_date).
+    """
+    _seed_one_event(connection)
+
+    real_now_far_from_edition_date = datetime(
+        2026, 9, 25, 10, 0, 0, tzinfo=generation_module.APP_TIMEZONE
+    )
+    frozen = type("_Frozen", (_FrozenDatetime,), {"_frozen": real_now_far_from_edition_date})
+    monkeypatch.setattr(generation_module, "datetime", frozen)
+
+    result = _generate(connection, output_dir)  # edition_date=_EDITION_DATE (2026-09-16)
+
+    assert result.events_created == 1
+    assert result.events_in_edition == 1
+    assert result.failed_events == []
+
+    events = EventRepository(connection).list_by_created_date(_EDITION_DATE.isoformat())
+    assert len(events) == 1
+    # created_at carries edition_day's date, not the real "now" date.
+    assert events[0].created_at.startswith(_EDITION_DATE.isoformat())
+
+
+# --- Post-Implementation Review, Finding 4: LLM usage logging --------------
+
+
+class _UsageReportingProvider(_FakeLLMProvider):
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        text = "\n".join(message.content for message in request.messages)
+        if "HAS_DEVELOPER_IMPACT" in text:
+            return CompletionResponse(
+                text=self.developer_impact_response,
+                usage=Usage(input_tokens=120, output_tokens=40),
+            )
+        return CompletionResponse(
+            text=self.summary_response, usage=Usage(input_tokens=200, output_tokens=60)
+        )
+
+
+def test_llm_usage_is_logged_not_silently_discarded(
+    connection: sqlite3.Connection, output_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _seed_one_event(connection)
+
+    with caplog.at_level(logging.INFO, logger="app.pipeline.generation"):
+        _generate(connection, output_dir, provider=_UsageReportingProvider())
+
+    usage_lines = [record.message for record in caplog.records if "LLM usage" in record.message]
+    assert any("stage=summarize" in line and "input_tokens=200" in line for line in usage_lines)
+    assert any(
+        "stage=developer_impact" in line and "output_tokens=40" in line for line in usage_lines
+    )

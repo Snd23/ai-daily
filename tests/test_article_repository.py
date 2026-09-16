@@ -699,3 +699,100 @@ def test_list_pending_matches_for_established_canonicals_requires_matching_hash(
     _normalize(repository, unrelated.id, content_hash="hash-2")  # type: ignore[arg-type]
 
     assert repository.list_pending_matches_for_established_canonicals() == {}
+
+
+# --- TASK-024: clustering selection and event attachment ---------------------
+
+
+def test_list_clusterable_returns_only_normalized_pending_articles(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    normalized = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    _normalize(repository, normalized.id, content_hash="hash-1")  # type: ignore[arg-type]
+    # Not yet normalized: no content_hash.
+    repository.create(_make_article(source_id=source_id, url="https://a.test/2"))
+
+    clusterable = repository.list_clusterable()
+
+    assert [article.id for article in clusterable] == [normalized.id]
+
+
+def test_list_clusterable_excludes_discarded_duplicates(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    canonical = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    duplicate = repository.create(_make_article(source_id=source_id, url="https://a.test/2"))
+    _normalize(repository, canonical.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _normalize(repository, duplicate.id, content_hash="hash-1")  # type: ignore[arg-type]
+    repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type]
+
+    assert [article.id for article in repository.list_clusterable()] == [canonical.id]
+
+
+def test_assign_event_attaches_articles_and_marks_them_processed(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    event_id = _create_event(connection)
+    first = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    second = repository.create(_make_article(source_id=source_id, url="https://a.test/2"))
+    _normalize(repository, first.id, content_hash="hash-1")  # type: ignore[arg-type]
+    _normalize(repository, second.id, content_hash="hash-2")  # type: ignore[arg-type]
+
+    repository.assign_event(event_id, [first.id, second.id])  # type: ignore[list-item]
+
+    attached = repository.list_by_event(event_id)
+    assert [article.id for article in attached] == [first.id, second.id]
+    assert all(article.status == "processed" for article in attached)
+    # Attached articles leave the clusterable pool, so a rerun creates no
+    # second event for them (TASK-024 rerun policy).
+    assert repository.list_clusterable() == []
+
+
+def test_assign_event_rejects_an_empty_or_repeated_id_list(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    event_id = _create_event(connection)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        repository.assign_event(event_id, [])
+    with pytest.raises(ValueError, match="repeated ids"):
+        repository.assign_event(event_id, [1, 1])
+
+
+def test_assign_event_is_atomic_when_one_article_is_not_pending(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    event_id = _create_event(connection)
+    pending = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    already_processed = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/2")
+    )
+    _set_status(connection, already_processed.id, "processed")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="only 1 row"):
+        repository.assign_event(event_id, [pending.id, already_processed.id])  # type: ignore[list-item]
+
+    # Rolled back: the pending article was not attached either.
+    refreshed = repository.get_by_url("https://a.test/1")
+    assert refreshed is not None
+    assert refreshed.event_id is None
+    assert refreshed.status == "pending"
+
+
+def test_list_by_event_returns_nothing_for_an_unknown_event(
+    repository: ArticleRepository,
+) -> None:
+    assert repository.list_by_event(999) == []
+
+
+def _create_event(connection: sqlite3.Connection) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO event
+            (verification_status, confidence_score, importance_score, event_type, created_at)
+        VALUES ('VERIFIED', 8.0, 7.0, 'standard', '2026-09-16T07:00:00+02:00')
+        """
+    )
+    connection.commit()
+    assert cursor.lastrowid is not None
+    return cursor.lastrowid
