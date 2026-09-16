@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from datetime import date, timedelta
 
 import pytest
 
@@ -17,6 +18,12 @@ from app.database.connection import get_connection
 from app.database.migrations import run_migrations
 from app.database.source import Source
 from app.database.source_repository import SourceRepository
+
+# `_make_article`'s default `published_at` is same-day as this reference
+# date, so every pre-existing `list_clusterable` test below (none of which
+# is about freshness) stays decoupled from TASK-028's window with
+# `lookback_days=0`.
+_REFERENCE_DATE = date(2026, 9, 1)
 
 
 def _make_article(**overrides: object) -> Article:
@@ -712,7 +719,7 @@ def test_list_clusterable_returns_only_normalized_pending_articles(
     # Not yet normalized: no content_hash.
     repository.create(_make_article(source_id=source_id, url="https://a.test/2"))
 
-    clusterable = repository.list_clusterable()
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=0)
 
     assert [article.id for article in clusterable] == [normalized.id]
 
@@ -726,7 +733,70 @@ def test_list_clusterable_excludes_discarded_duplicates(
     _normalize(repository, duplicate.id, content_hash="hash-1")  # type: ignore[arg-type]
     repository.mark_duplicates(canonical.id, [duplicate.id])  # type: ignore[arg-type]
 
-    assert [article.id for article in repository.list_clusterable()] == [canonical.id]
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=0)
+    assert [article.id for article in clusterable] == [canonical.id]
+
+
+# --- freshness (TASK-028) ---------------------------------------------------
+
+
+def test_list_clusterable_includes_an_article_within_the_lookback_window(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    one_day_before = (_REFERENCE_DATE - timedelta(days=1)).isoformat() + "T10:00:00+00:00"
+    article = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/1", published_at=one_day_before)
+    )
+    _normalize(repository, article.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=2)
+
+    assert [a.id for a in clusterable] == [article.id]
+
+
+def test_list_clusterable_includes_an_article_exactly_on_the_lookback_boundary(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    """Exactly `lookback_days` (2) days before `reference_date`: inclusive boundary."""
+    on_boundary = (_REFERENCE_DATE - timedelta(days=2)).isoformat() + "T10:00:00+00:00"
+    article = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/1", published_at=on_boundary)
+    )
+    _normalize(repository, article.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=2)
+
+    assert [a.id for a in clusterable] == [article.id]
+
+
+def test_list_clusterable_excludes_an_article_older_than_the_lookback_window(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    """One day past the boundary (3 days before `reference_date`): excluded."""
+    too_old = (_REFERENCE_DATE - timedelta(days=3)).isoformat() + "T10:00:00+00:00"
+    article = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/1", published_at=too_old)
+    )
+    _normalize(repository, article.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=2)
+
+    assert clusterable == []
+
+
+def test_list_clusterable_never_excludes_an_article_with_no_published_at(
+    repository: ArticleRepository, source_id: int
+) -> None:
+    """Absence of `published_at` is unknown, never treated as staleness
+    (CLAUDE.md §17) -- true even under the tightest possible window."""
+    article = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/1", published_at=None)
+    )
+    _normalize(repository, article.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    clusterable = repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=0)
+
+    assert [a.id for a in clusterable] == [article.id]
 
 
 def test_assign_event_attaches_articles_and_marks_them_processed(
@@ -745,7 +815,7 @@ def test_assign_event_attaches_articles_and_marks_them_processed(
     assert all(article.status == "processed" for article in attached)
     # Attached articles leave the clusterable pool, so a rerun creates no
     # second event for them (TASK-024 rerun policy).
-    assert repository.list_clusterable() == []
+    assert repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=0) == []
 
 
 def test_assign_event_rejects_an_empty_or_repeated_id_list(

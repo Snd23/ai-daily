@@ -22,6 +22,12 @@ already-persisted `Event` rows and re-runs only the generation phase.
 No stage implemented by an earlier task is modified or reimplemented here:
 this module only prepares their inputs, persists their outputs and
 sequences them.
+
+`list_clusterable` (TASK-028) additionally excludes articles whose
+`published_at` is older than `lookback_days` before `edition_day` -- the
+FILTER stage's recency requirement (docs/ARCHITECTURE.md §4.15), applied
+here as a safety net alongside `app.collectors.rss.RssCollector`'s
+ingestion gate.
 """
 
 from __future__ import annotations
@@ -110,6 +116,7 @@ def generate_edition(
     *,
     language: str,
     output_dir: Path,
+    lookback_days: int,
     edition_date: date | None = None,
 ) -> GenerationResult:
     """Run the analysis and generation phases and write one edition's PDF.
@@ -123,6 +130,11 @@ def generate_edition(
         language: the edition's language; one invocation produces exactly
             one language (docs/ARCHITECTURE.md §5.1).
         output_dir: directory the PDF is written to; created if missing.
+        lookback_days: the freshness safety net's window
+            (`Settings.news_lookback_days`, TASK-028) -- see
+            `ArticleRepository.list_clusterable`. Required, not defaulted,
+            so the caller (the CLI) always supplies the real configured
+            value rather than this module inventing its own.
         edition_date: the edition's date. Defaults to today in the
             application timezone (docs/ARCHITECTURE.md §9).
 
@@ -148,7 +160,7 @@ def generate_edition(
     edition_repository = EditionRepository(connection)
 
     events_created = _analyze_pending_articles(
-        article_repository, source_repository, event_repository, edition_day
+        article_repository, source_repository, event_repository, edition_day, lookback_days
     )
 
     events_for_edition, failed_events = _compose_editorial_events(
@@ -205,6 +217,7 @@ def _analyze_pending_articles(
     source_repository: SourceRepository,
     event_repository: EventRepository,
     edition_day: date,
+    lookback_days: int,
 ) -> int:
     """Cluster, verify, categorize and rank pending articles into `Event` rows.
 
@@ -212,7 +225,9 @@ def _analyze_pending_articles(
     once per edition language (docs/PRD.md §38). Returns the number of
     events created.
     """
-    clusterable = article_repository.list_clusterable()
+    clusterable = article_repository.list_clusterable(
+        reference_date=edition_day, lookback_days=lookback_days
+    )
     if not clusterable:
         logger.info("No clusterable article: no new event created")
         return 0

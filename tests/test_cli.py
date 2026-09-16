@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -56,7 +56,21 @@ sources:
     is_active: true
 """
 
-_RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+def _rfc822(days_ago: int) -> str:
+    """An RFC-822 `pubDate` string `days_ago` days before real "now".
+
+    Computed relative to the real clock (not a fixed calendar date): TASK-028's
+    `collect` command filters entries by age against `datetime.now(APP_TIMEZONE)`,
+    so a fixed date would eventually fall outside the default lookback window
+    and start failing these date-agnostic collection tests for an unrelated
+    reason.
+    """
+    return (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+
+def _rss_feed() -> str:
+    """Two entries, both well within the default `NEWS_LOOKBACK_DAYS` (2)."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Example Feed</title>
@@ -66,13 +80,13 @@ _RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
       <title>First Article</title>
       <link>https://example.com/first</link>
       <description>&lt;p&gt;First summary&lt;/p&gt;</description>
-      <pubDate>Tue, 01 Sep 2026 10:00:00 GMT</pubDate>
+      <pubDate>{_rfc822(0)}</pubDate>
     </item>
     <item>
       <title>Second Article</title>
       <link>https://example.com/second</link>
       <description>&lt;p&gt;Second summary&lt;/p&gt;</description>
-      <pubDate>Wed, 02 Sep 2026 11:00:00 GMT</pubDate>
+      <pubDate>{_rfc822(1)}</pubDate>
     </item>
   </channel>
 </rss>
@@ -158,7 +172,7 @@ def test_each_command_has_working_help(command: str) -> None:
 
 @responses.activate
 def test_collect_persists_sources_and_articles(workspace: Path) -> None:
-    responses.add(responses.GET, "https://example.com/feed", body=_RSS_FEED, status=200)
+    responses.add(responses.GET, "https://example.com/feed", body=_rss_feed(), status=200)
 
     result = runner.invoke(app, ["collect"])
 
@@ -177,6 +191,38 @@ def test_collect_persists_sources_and_articles(workspace: Path) -> None:
         assert first is not None
         assert second is not None
         assert first.status == "pending"
+    finally:
+        connection.close()
+
+
+@responses.activate
+def test_collect_skips_an_article_older_than_the_lookback_window(workspace: Path) -> None:
+    stale_feed = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Feed</title>
+    <link>https://example.com</link>
+    <description>Example</description>
+    <item>
+      <title>Old Article</title>
+      <link>https://example.com/old</link>
+      <description>Old summary</description>
+      <pubDate>{_rfc822(30)}</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+    responses.add(responses.GET, "https://example.com/feed", body=stale_feed, status=200)
+
+    result = runner.invoke(app, ["collect"])
+
+    assert result.exit_code == 0, result.output
+    assert "0 new article" in result.output
+    assert "1 stale skipped" in result.output
+
+    connection = _connect(workspace)
+    try:
+        assert ArticleRepository(connection).get_by_url("https://example.com/old") is None
     finally:
         connection.close()
 
@@ -263,7 +309,14 @@ def test_process_normalizes_and_deduplicates(workspace: Path) -> None:
 
 
 def _seed_one_article(db_path: Path) -> None:
-    """Persist one already-normalized article, ready to be clustered."""
+    """Persist one already-normalized article, ready to be clustered.
+
+    `published_at` is "now" (not a fixed calendar date): `generate` defaults
+    `edition_day` to the real current date, and TASK-028's `list_clusterable`
+    safety net filters on age against it, so a fixed date would eventually
+    fall outside the default lookback window for a reason unrelated to what
+    these tests actually exercise.
+    """
     connection = _connect(db_path)
     try:
         source = SourceRepository(connection).create(
@@ -278,13 +331,14 @@ def _seed_one_article(db_path: Path) -> None:
             )
         )
         assert source.id is not None
+        now = datetime.now(UTC).isoformat()
         ArticleRepository(connection).create(
             Article(
                 source_id=source.id,
                 title="Example Story",
                 url="https://example.com/story",
-                published_at="2026-09-16T08:00:00+00:00",
-                fetched_at="2026-09-16T09:00:00+00:00",
+                published_at=now,
+                fetched_at=now,
                 raw_excerpt="<p>Something happened.</p>",
                 normalized_text="Something happened.",
                 content_hash="hash-story",
@@ -358,7 +412,7 @@ def test_generate_reports_a_missing_api_key_cleanly(workspace: Path) -> None:
 def test_run_executes_collect_process_and_generate(
     workspace: Path, fake_llm_provider: None
 ) -> None:
-    responses.add(responses.GET, "https://example.com/feed", body=_RSS_FEED, status=200)
+    responses.add(responses.GET, "https://example.com/feed", body=_rss_feed(), status=200)
 
     result = runner.invoke(app, ["run", "--language", "en"])
 

@@ -13,6 +13,11 @@ implements:
   uses a single, fixed timezone with no per-user or per-locale handling
   (docs/ARCHITECTURE.md §9). Actually using it for scheduling or timestamps
   is left to the tasks that need it (e.g. Logging, TASK-003).
+- `news_lookback_days` (TASK-028) is the FILTER stage's recency window
+  (docs/ARCHITECTURE.md §2, §4.15): the maximum age, in days, an article's
+  `published_at` may have to still be collected/clustered. Must be a
+  non-negative integer; `DEFAULT_NEWS_LOOKBACK_DAYS` is the approved
+  default (2 days).
 """
 
 from __future__ import annotations
@@ -39,6 +44,13 @@ APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
 
 LLMProviderName = Literal["anthropic", "openai"]
 
+# Approved TASK-028 default: an article/event is still fresh if its most
+# recent `published_at` is no more than this many days before the reference
+# date (docs/ARCHITECTURE.md §4.15). Exposed as a constant, not just a
+# literal default value, so `app.collectors.rss` and `app.pipeline.generation`
+# can fall back to the exact same number without duplicating it.
+DEFAULT_NEWS_LOOKBACK_DAYS = 2
+
 
 class Settings(BaseModel):
     """Validated application configuration (see `.env.example`)."""
@@ -50,6 +62,7 @@ class Settings(BaseModel):
     default_language: str = "it"
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    news_lookback_days: int = DEFAULT_NEWS_LOOKBACK_DAYS
 
     @field_validator("default_language")
     @classmethod
@@ -58,6 +71,13 @@ class Settings(BaseModel):
             raise ValueError(
                 f"DEFAULT_LANGUAGE must be one of {SUPPORTED_LANGUAGES}, got {value!r}"
             )
+        return value
+
+    @field_validator("news_lookback_days")
+    @classmethod
+    def _validate_news_lookback_days(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"NEWS_LOOKBACK_DAYS must be >= 0, got {value!r}")
         return value
 
 
@@ -100,6 +120,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
                 "default_language": _read_env("DEFAULT_LANGUAGE", "it"),
                 "telegram_bot_token": _read_optional_env("TELEGRAM_BOT_TOKEN"),
                 "telegram_chat_id": _read_optional_env("TELEGRAM_CHAT_ID"),
+                "news_lookback_days": _read_env(
+                    "NEWS_LOOKBACK_DAYS", str(DEFAULT_NEWS_LOOKBACK_DAYS)
+                ),
             }
         )
     except ValidationError as exc:

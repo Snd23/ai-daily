@@ -24,12 +24,14 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import typer
 
 from app.collectors.rss import RssCollector
 from app.config import (
+    APP_TIMEZONE,
     DEFAULT_SOURCES_PATH,
     ConfigurationError,
     Settings,
@@ -104,7 +106,15 @@ def collect() -> None:
             len(sync_result.unchanged),
         )
 
-        results = RssCollector(source_repository, article_repository).collect_all()
+        collector = RssCollector(
+            source_repository, article_repository, lookback_days=settings.news_lookback_days
+        )
+        # Same "today" expression `generate_edition` defaults `edition_day`
+        # to (TASK-028, docs/ARCHITECTURE.md §4.15) -- the one place this
+        # process asks "what day is it", so collect's freshness gate and
+        # generate's safety net stay consistent without sharing state.
+        reference_date = datetime.now(APP_TIMEZONE).date()
+        results = collector.collect_all(reference_date=reference_date)
     except _CRITICAL_ERRORS as exc:
         typer.echo(f"collect failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -113,19 +123,22 @@ def collect() -> None:
 
     created = sum(len(result.created) for result in results)
     duplicates = sum(result.skipped_duplicates for result in results)
+    stale = sum(result.skipped_stale for result in results)
     failed = [result for result in results if not result.succeeded]
 
     logger.info(
         "Collect complete: %d source(s) processed, %d new article(s), "
-        "%d duplicate(s) skipped, %d source(s) failed",
+        "%d duplicate(s) skipped, %d stale skipped, %d source(s) failed",
         len(results),
         created,
         duplicates,
+        stale,
         len(failed),
     )
     typer.echo(
         f"Collected {len(results)} source(s): {created} new article(s), "
-        f"{duplicates} duplicate(s) skipped, {len(failed)} source(s) failed."
+        f"{duplicates} duplicate(s) skipped, {stale} stale skipped, "
+        f"{len(failed)} source(s) failed."
     )
     for result in failed:
         typer.echo(f"  - {result.source.name}: {result.error}", err=True)
@@ -201,6 +214,7 @@ def generate(
             create_llm_provider(settings),
             language=edition_language,
             output_dir=_editions_dir(settings),
+            lookback_days=settings.news_lookback_days,
         )
     except _CRITICAL_ERRORS as exc:
         typer.echo(f"generate failed: {exc}", err=True)

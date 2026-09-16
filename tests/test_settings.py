@@ -21,6 +21,7 @@ _ENV_VARS = (
     "DEFAULT_LANGUAGE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
+    "NEWS_LOOKBACK_DAYS",
 )
 
 # A path guaranteed not to exist, so `load_settings` never picks up this
@@ -46,6 +47,7 @@ def test_defaults_when_no_environment_variables_are_set() -> None:
     assert settings.default_language == "it"
     assert settings.telegram_bot_token is None
     assert settings.telegram_chat_id is None
+    assert settings.news_lookback_days == 2
 
 
 def test_environment_variables_override_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,6 +57,7 @@ def test_environment_variables_override_defaults(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("DEFAULT_LANGUAGE", "en")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bot-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setenv("NEWS_LOOKBACK_DAYS", "5")
 
     settings = load_settings(env_file=_NO_ENV_FILE)
 
@@ -64,6 +67,7 @@ def test_environment_variables_override_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.default_language == "en"
     assert settings.telegram_bot_token == "bot-token"
     assert settings.telegram_chat_id == "12345"
+    assert settings.news_lookback_days == 5
 
 
 def test_empty_environment_values_fall_back_to_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,6 +75,7 @@ def test_empty_environment_values_fall_back_to_defaults(monkeypatch: pytest.Monk
     monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("DEFAULT_LANGUAGE", "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("NEWS_LOOKBACK_DAYS", "")
 
     settings = load_settings(env_file=_NO_ENV_FILE)
 
@@ -78,6 +83,7 @@ def test_empty_environment_values_fall_back_to_defaults(monkeypatch: pytest.Monk
     assert settings.database_url == "sqlite:///data/ai_daily.db"
     assert settings.default_language == "it"
     assert settings.anthropic_api_key is None
+    assert settings.news_lookback_days == 2
 
 
 def test_unsupported_language_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,6 +95,20 @@ def test_unsupported_language_is_rejected(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_unsupported_llm_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "made-up-provider")
+
+    with pytest.raises(ConfigurationError):
+        load_settings(env_file=_NO_ENV_FILE)
+
+
+def test_negative_news_lookback_days_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEWS_LOOKBACK_DAYS", "-1")
+
+    with pytest.raises(ConfigurationError, match="NEWS_LOOKBACK_DAYS"):
+        load_settings(env_file=_NO_ENV_FILE)
+
+
+def test_non_numeric_news_lookback_days_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEWS_LOOKBACK_DAYS", "not-a-number")
 
     with pytest.raises(ConfigurationError):
         load_settings(env_file=_NO_ENV_FILE)

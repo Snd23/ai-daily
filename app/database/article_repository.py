@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
+from datetime import date, timedelta
 from typing import Any
 
 from app.database.article import Article
@@ -306,28 +307,46 @@ class ArticleRepository:
             result.setdefault(canonical_id, []).append(pending_id)
         return result
 
-    def list_clusterable(self) -> list[Article]:
+    def list_clusterable(self, *, reference_date: date, lookback_days: int) -> list[Article]:
         """Return every `Article` ready to be clustered into an `Event` (TASK-024).
 
         A clusterable article has `status = 'pending'` (so it has not
         already been assigned to an `Event` by a previous run, and was not
         discarded as a duplicate by TASK-009), a non-empty `content_hash`
-        (so TASK-008's normalization has run on it) and no `event_id` yet.
-        Ordered by `id`, so clustering is independent of storage order.
+        (so TASK-008's normalization has run on it), no `event_id` yet, and
+        a `published_at` no older than `lookback_days` before
+        `reference_date` (TASK-028 safety net -- a second freshness check
+        alongside `app.collectors.rss.RssCollector`'s ingestion gate, since
+        an article already sitting in the database from before this filter
+        existed would otherwise still reach clustering). An article with no
+        `published_at` is never excluded on that basis alone (CLAUDE.md §17:
+        absence of a date is not evidence of staleness). Ordered by `id`, so
+        clustering is independent of storage order.
+
+        Args:
+            reference_date: "today", against which freshness is measured.
+                Always the caller's `edition_day` (docs/ARCHITECTURE.md
+                §4.15) -- required, not defaulted, so this method never
+                computes its own notion of "now".
+            lookback_days: the maximum age, in days, of a usable
+                `published_at` (`Settings.news_lookback_days`).
 
         This selection is what makes generation rerun-safe: `assign_event`
         moves an article out of `'pending'`, so a second run finds nothing
         left to cluster and creates no duplicate `Event`
         (docs/ARCHITECTURE.md §4.14).
         """
+        cutoff_date = (reference_date - timedelta(days=lookback_days)).isoformat()
         rows = self._connection.execute(
             f"""
             SELECT {_SELECT_COLUMNS} FROM article
             WHERE status = 'pending'
               AND event_id IS NULL
               AND content_hash IS NOT NULL AND content_hash != ''
+              AND (published_at IS NULL OR substr(published_at, 1, 10) >= ?)
             ORDER BY id
-            """
+            """,
+            (cutoff_date,),
         ).fetchall()
         return [_from_row(row) for row in rows]
 

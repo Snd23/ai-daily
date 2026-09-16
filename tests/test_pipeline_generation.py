@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from pypdf import PdfReader
 
+from app.config.settings import DEFAULT_NEWS_LOOKBACK_DAYS
 from app.database.article import Article
 from app.database.article_repository import ArticleRepository
 from app.database.connection import get_connection
@@ -142,12 +143,14 @@ def _generate(
     *,
     provider: _FakeLLMProvider | None = None,
     language: str = "en",
+    lookback_days: int = DEFAULT_NEWS_LOOKBACK_DAYS,
 ) -> Any:
     return generate_edition(
         connection,
         provider or _FakeLLMProvider(),
         language=language,
         output_dir=output_dir,
+        lookback_days=lookback_days,
         edition_date=_EDITION_DATE,
     )
 
@@ -189,7 +192,10 @@ def test_articles_are_attached_to_their_event_and_leave_the_pending_pool(
     attached = repository.list_by_event(event_id)
     assert len(attached) == 2
     assert all(article.status == "processed" for article in attached)
-    assert repository.list_clusterable() == []
+    clusterable = repository.list_clusterable(
+        reference_date=_EDITION_DATE, lookback_days=DEFAULT_NEWS_LOOKBACK_DAYS
+    )
+    assert clusterable == []
 
 
 def test_articles_with_different_titles_form_separate_events(
@@ -220,6 +226,36 @@ def test_unnormalized_articles_are_not_clustered(
 
     assert result.events_created == 0
     assert result.events_in_edition == 0
+
+
+# --- freshness (TASK-028) ----------------------------------------------------
+
+
+def test_an_article_older_than_the_lookback_window_creates_no_event(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    """The `list_clusterable` safety net excludes it before clustering even
+    runs, even though it would otherwise cluster normally on its own."""
+    source = _add_source(connection)
+    _add_article(connection, source, published_at="2026-09-01T08:00:00+00:00")
+
+    result = _generate(connection, output_dir, lookback_days=2)
+
+    assert result.events_created == 0
+    assert result.events_in_edition == 0
+
+
+def test_an_article_with_no_published_at_still_creates_an_event(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    """Absence of `published_at` is unknown, never treated as staleness
+    (CLAUDE.md §17) -- true even under the tightest possible window."""
+    source = _add_source(connection)
+    _add_article(connection, source, published_at=None)
+
+    result = _generate(connection, output_dir, lookback_days=0)
+
+    assert result.events_created == 1
 
 
 # --- generation phase: content, editorial, PDF ------------------------------
