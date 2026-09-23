@@ -34,6 +34,8 @@ cp .env.example .env
 
 See `.env.example` for the currently defined variables (LLM provider selection and API keys, database location, default edition language, the collection freshness window, Telegram credentials for a later phase). `.env` must never be committed.
 
+`LLM_PROVIDER` selects `anthropic`, `openai` or `gemini`, with the matching `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` set. Gemini (Google AI Studio) has a free tier that needs no billing, unlike Anthropic and OpenAI.
+
 ## Development commands
 
 ```bash
@@ -71,7 +73,7 @@ Implemented so far, wired together by `app/pipeline/` (TASK-024) and driven by t
 - SQLite schema, migrations and repositories for sources, articles, events, generated event content and editions;
 - RSS collection, article normalization and deduplication;
 - event clustering, deterministic event verification and deterministic importance ranking;
-- the LLM provider abstraction (Anthropic, OpenAI), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
+- the LLM provider abstraction (Anthropic, OpenAI, Gemini), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
 - editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch);
 - PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations);
 - pipeline orchestration (`app/pipeline/`, TASK-024): sequences the stages above into one persisted run — `Event`, `Article.event_id`, generated content per language, and the edition's PDF — including deterministic category assignment and ranking factors;

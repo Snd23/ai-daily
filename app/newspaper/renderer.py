@@ -34,9 +34,10 @@ masthead and Top Stories, followed by an explicit `PageBreak`; page 2
 onward flows the category sections (in `Edition.sections`'s already-fixed
 order) and What to Watch, using `Platypus`'s native pagination (no manual
 page-breaking algorithm). AI SENZA SBATTI / Developer Impact sub-blocks are
-distinguished purely by typography/indentation/rules, not by new label
-text (approved decision -- their semantic sub-headers are not this task's
-responsibility and `config/labels.yaml` is not modified).
+distinguished purely by typography (a rounded, tinted callout box, see
+`_build_callout`), not by new label text (approved decision -- their
+semantic sub-headers are not this task's responsibility and
+`config/labels.yaml` is not modified).
 """
 
 from __future__ import annotations
@@ -58,7 +59,6 @@ from reportlab.platypus import (
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
-    Spacer,
 )
 from reportlab.platypus.doctemplate import LayoutError
 
@@ -154,15 +154,25 @@ def _format_edition_date(edition_date: date, language: str) -> str:
 
 
 def _thin_rule() -> HRFlowable:
-    """A short rule used to visually separate an optional sub-block from the summary."""
+    """A short, muted rule used to visually separate citations from the summary/callout above."""
     return HRFlowable(
-        width="30%",
+        width="25%",
         thickness=0.5,
-        color=styles.RULE_COLOR,
+        color=styles.MUTED_COLOR,
         spaceBefore=4,
-        spaceAfter=2,
+        spaceAfter=4,
         hAlign="LEFT",
     )
+
+
+def _build_section_heading(text: str) -> list[Flowable]:
+    """A section heading rendered as a full-width colored band (modern styling pass).
+
+    A single `Paragraph`: `SECTION_HEADING.backColor` already paints behind
+    the whole available line width, not just the text, so no separate rule
+    or `Table` is needed to get the band effect.
+    """
+    return [Paragraph(_escape(text), styles.SECTION_HEADING)]
 
 
 def _build_masthead(edition: Edition, metadata: NewspaperMetadata) -> list[Flowable]:
@@ -170,15 +180,20 @@ def _build_masthead(edition: Edition, metadata: NewspaperMetadata) -> list[Flowa
     edition_label = _EDITION_NUMBER_LABEL[edition.language].format(n=metadata.edition_number)
     return [
         Paragraph("AI DAILY", styles.MASTHEAD_TITLE),
-        HRFlowable(
-            width="100%",
-            thickness=styles.RULE_THICKNESS,
-            color=styles.RULE_COLOR,
-            spaceAfter=6,
-        ),
         Paragraph(_escape(f"{date_str} — {edition_label}"), styles.MASTHEAD_META),
-        Spacer(1, 12),
     ]
+
+
+def _build_callout(fields: list[str]) -> Paragraph:
+    """One Developer Impact / AI Senza Sbatti callout box (modern styling pass).
+
+    Every field is escaped and joined with `<br/>` into a single `Paragraph`
+    styled with `styles.SUB_BLOCK_BODY` (rounded, tinted, bordered), so the
+    whole sub-block renders as one cohesive card instead of a separate box
+    per field. Deliberately not a `Table` -- see `app.newspaper.styles`
+    module docstring for why (page-split safety).
+    """
+    return Paragraph("<br/>".join(_escape(field) for field in fields), styles.SUB_BLOCK_BODY)
 
 
 def _build_developer_impact_block(developer_impact: DeveloperImpact) -> list[Flowable]:
@@ -198,28 +213,21 @@ def _build_developer_impact_block(developer_impact: DeveloperImpact) -> list[Flo
     if not developer_impact.has_developer_impact or developer_impact.impact_summary is None:
         return []
 
-    blocks: list[Flowable] = [
-        _thin_rule(),
-        Paragraph(_escape(developer_impact.impact_summary), styles.SUB_BLOCK_BODY),
-    ]
+    fields = [developer_impact.impact_summary]
     if developer_impact.technical_area:
-        blocks.append(
-            Paragraph(_escape(", ".join(developer_impact.technical_area)), styles.SUB_BLOCK_BODY)
-        )
-    return blocks
+        fields.append(", ".join(developer_impact.technical_area))
+    return [_build_callout(fields)]
 
 
 def _build_concept_explanation_block(explanation: ConceptExplanation) -> list[Flowable]:
-    fields = (
+    fields = [
         explanation.technical_definition,
         explanation.simple_explanation,
         explanation.example,
         explanation.why_it_matters,
         explanation.one_liner,
-    )
-    blocks: list[Flowable] = [_thin_rule()]
-    blocks.extend(Paragraph(_escape(field), styles.SUB_BLOCK_BODY) for field in fields)
-    return blocks
+    ]
+    return [_build_callout(fields)]
 
 
 def _is_renderable_link(url: str) -> bool:
@@ -300,10 +308,8 @@ def _build_story_block(content: EditorialContent) -> Flowable:
 def _build_top_stories(edition: Edition) -> list[Flowable]:
     if not edition.top_stories:
         return []
-    heading = Paragraph(
-        _escape(_section_labels().get("top_stories", edition.language)), styles.SECTION_HEADING
-    )
-    return [heading, *(_build_story_block(content) for content in edition.top_stories)]
+    heading = _build_section_heading(_section_labels().get("top_stories", edition.language))
+    return [*heading, *(_build_story_block(content) for content in edition.top_stories)]
 
 
 def _build_section(section: EditionSection) -> list[Flowable]:
@@ -316,17 +322,15 @@ def _build_section(section: EditionSection) -> list[Flowable]:
     """
     if not section.entries:
         return []
-    heading = Paragraph(_escape(section.label), styles.SECTION_HEADING)
-    return [heading, *(_build_story_block(content) for content in section.entries)]
+    heading = _build_section_heading(section.label)
+    return [*heading, *(_build_story_block(content) for content in section.entries)]
 
 
 def _build_what_to_watch(edition: Edition) -> list[Flowable]:
     if not edition.what_to_watch:
         return []
-    heading = Paragraph(
-        _escape(_section_labels().get("what_to_watch", edition.language)), styles.SECTION_HEADING
-    )
-    return [heading, *(_build_story_block(content) for content in edition.what_to_watch)]
+    heading = _build_section_heading(_section_labels().get("what_to_watch", edition.language))
+    return [*heading, *(_build_story_block(content) for content in edition.what_to_watch)]
 
 
 def _build_story(edition: Edition, metadata: NewspaperMetadata) -> list[Flowable]:
@@ -351,9 +355,15 @@ def _make_footer_drawer(language: str) -> Callable[[Canvas, BaseDocTemplate], No
 
     def _draw_footer(canvas: Canvas, document: BaseDocTemplate) -> None:
         canvas.saveState()
+        page_width = styles.PAGE_SIZE[0]
+        rule_y = styles.MARGIN / 2 + styles.FOOTER_TEXT.leading
+        canvas.setStrokeColor(styles.MUTED_COLOR)
+        canvas.setLineWidth(styles.RULE_THICKNESS)
+        canvas.line(styles.MARGIN, rule_y, page_width - styles.MARGIN, rule_y)
+        canvas.setFillColor(styles.FOOTER_TEXT.textColor)
         canvas.setFont(styles.FOOTER_TEXT.fontName, styles.FOOTER_TEXT.fontSize)
         text = label_template.format(n=canvas.getPageNumber())
-        canvas.drawCentredString(styles.PAGE_SIZE[0] / 2, styles.MARGIN / 2, text)
+        canvas.drawCentredString(page_width / 2, styles.MARGIN / 2, text)
         canvas.restoreState()
 
     return _draw_footer

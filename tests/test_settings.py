@@ -17,6 +17,7 @@ _ENV_VARS = (
     "LLM_PROVIDER",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
     "DATABASE_URL",
     "DEFAULT_LANGUAGE",
     "TELEGRAM_BOT_TOKEN",
@@ -43,6 +44,7 @@ def test_defaults_when_no_environment_variables_are_set() -> None:
     assert settings.llm_provider == "anthropic"
     assert settings.anthropic_api_key is None
     assert settings.openai_api_key is None
+    assert settings.gemini_api_key is None
     assert settings.database_url == "sqlite:///data/ai_daily.db"
     assert settings.default_language == "it"
     assert settings.telegram_bot_token is None
@@ -68,6 +70,18 @@ def test_environment_variables_override_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.telegram_bot_token == "bot-token"
     assert settings.telegram_chat_id == "12345"
     assert settings.news_lookback_days == 5
+
+
+def test_environment_variable_sets_gemini_provider_and_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "gm-test")
+
+    settings = load_settings(env_file=_NO_ENV_FILE)
+
+    assert settings.llm_provider == "gemini"
+    assert settings.gemini_api_key == "gm-test"
 
 
 def test_empty_environment_values_fall_back_to_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
