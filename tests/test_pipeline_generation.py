@@ -65,6 +65,8 @@ class _FakeLLMProvider(LLMProvider):
         if self.fail_with is not None:
             raise self.fail_with
         text = "\n".join(message.content for message in request.messages)
+        if "event grouping stage" in text:
+            return CompletionResponse(text="NONE")
         if "HAS_DEVELOPER_IMPACT" in text:
             return CompletionResponse(text=self.developer_impact_response)
         return CompletionResponse(text=self.summary_response)
@@ -517,7 +519,12 @@ def test_only_the_selected_events_reach_the_llm(
     assert _count(connection, "event") == 2
     assert result.events_in_edition == 1
     assert _count(connection, "event_content") == 1
-    assert len(provider.requests) == 2  # summarize + developer impact, for one event only
+    generation_requests = [
+        request
+        for request in provider.requests
+        if "event grouping stage" not in request.messages[0].content
+    ]
+    assert len(generation_requests) == 2  # summarize + developer impact, for one event only
 
 
 # --- events whose articles have no text (TASK-036) ---------------------------
@@ -882,4 +889,54 @@ def test_only_the_top_stories_get_the_longer_length_target(
     prompts = _summary_prompts(provider)
     assert sum("Aim for 250 to 350 words" in prompt for prompt in prompts) == 1
     assert sum("Aim for 120 to 180 words" in prompt for prompt in prompts) == 1
+
+
+# --- cross-source clustering (TASK-038) --------------------------------------
+
+
+def _add_dots_articles(connection: sqlite3.Connection) -> None:
+    source = _add_source(connection)
+    other = _add_source(connection, name="Wired", url="https://wired.com/feed", tier=3)
+    _add_article(connection, source, title="Introducing dots", content_hash="h1")
+    _add_article(
+        connection,
+        other,
+        title="OpenAI's Dots Are Always-On Agents",
+        url="https://wired.com/dots",
+        content_hash="h2",
+    )
+
+
+class _MergingProvider(_FakeLLMProvider):
+    def __init__(self, grouping_answer: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.grouping_answer = grouping_answer
+
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        if self.grouping_answer is not None and "event grouping stage" in (
+            request.messages[0].content
+        ):
+            self.requests.append(request)
+            return CompletionResponse(text=self.grouping_answer)
+        return super().complete(request)
+
+
+def test_articles_of_different_outlets_about_one_event_become_one_event(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _add_dots_articles(connection)
+
+    _generate(connection, output_dir, provider=_MergingProvider("GROUP: 1, 2"))
+
+    assert _count(connection, "event") == 1
+
+
+def test_a_failing_merge_call_falls_back_to_the_exact_title_clusters(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _add_dots_articles(connection)
+
+    _generate(connection, output_dir, provider=_MergingProvider("not a grouping"))
+
+    assert _count(connection, "event") == 2
 

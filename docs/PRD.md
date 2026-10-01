@@ -245,6 +245,8 @@ PDF
 
 Each stage must be separate and testable.
 
+CLUSTER EVENTS groups articles by the event they report, including articles from different outlets whose titles differ; when this grouping cannot be done, articles are grouped only when their titles are identical and the run continues.
+
 The SUMMARIZE stage is specified in §41.
 
 ⸻

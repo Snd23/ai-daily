@@ -506,3 +506,81 @@ sequential with no per-event limit on articles or time, and the 6000-character c
 is per article, not per event; `rank` counts events later skipped, so a skipped
 Top Story leaves the edition with fewer long summaries.
 
+---
+
+## Findings behind TASK-038 to TASK-042 (edition of 2026-10-01 reviewed)
+
+Review of the real edition (15 stories, 143 articles collected that day):
+143 articles became 143 events (clustering merged nothing); all stories had a
+single source yet were `VERIFIED` (Tier 1 announcements about themselves); 7
+stories tied at importance 6.5, so the Top Stories were picked among ties; the
+same OpenAI DevDay was split into three stories and the "dots" announcement
+exists as three separate events (OpenAI, Wired, BBC); non-AI items (BMW Serie 3,
+GeForce NOW games, a NVIDIA fellowship) were published; Top Stories are printed
+twice; source dates appear as raw ISO strings. Tasks are done one at a time, in
+the order below; TASK-039 to TASK-042 get their full entry (motivation, scope,
+decisions) when they start.
+
+---
+
+## TASK-038 — Cross-source event clustering
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the clusterer groups articles only when their normalized titles
+are identical, so articles of different outlets about the same event never merge
+(real example: "Introducing dots" / "OpenAI's Dots Are Always-On AI Agents..." /
+"OpenAI unveils AI assistant 'dots'..."). Consequences: duplicated stories in the
+newspaper (CLAUDE.md §16) and no corroboration by independent sources (§15).
+
+**Decisions (user interview, 2026-10-01):**
+- Approach: local rules produce candidate groups (time window, distinctive words in
+  common); one LLM call over the candidates' titles decides the groups (CLAUDE.md
+  §20 semantic deduplication, §35 cost control). No embeddings.
+- The clustering only groups. The verification rules (TASK-017) are unchanged.
+- Only articles not yet assigned to an event are clustered; existing events are
+  neither dissolved nor recomputed.
+
+**Scope** (to be refined against the code before implementing):
+`app/clustering/article_clusterer.py` and its use in `app/pipeline/generation.py`;
+the LLM call goes through the `LLMProvider` abstraction; web titles are untrusted
+input in the prompt (§10-11).
+
+**Out of scope:** changing verification, ranking, importance, relevance filtering,
+embeddings, regrouping events already persisted.
+
+**Verification:** unit tests (grouping, a malformed or failing LLM answer, no
+LLM call when there are no candidates); `pytest`, `ruff check`, `mypy app`; a real
+run on a copy of the database with today's articles unassigned, comparing events
+before/after and token usage.
+
+**Changes:** `app/clustering/cluster_merger.py` (new), `app/pipeline/generation.py`
+(`_merge_clusters`, `llm_provider` passed to `_analyze_pending_articles`),
+`tests/test_cluster_merger.py`, `tests/test_pipeline_generation.py` (fake provider
+answers the grouping call), `docs/ARCHITECTURE.md` §4.1b, `docs/PRD.md`.
+
+**Design change during the task:** the first version linked candidates into
+connected components and capped their size; on real data shared words chained almost
+every title into one component (125 of 143 clusters had a link), which was discarded
+whole, so no call was made. The rules now define a candidate graph, the LLM receives
+every linked title and a group must be connected in that graph. A well-formed group
+that is not connected is ignored on its own; a malformed response rejects everything.
+
+**Verification results:**
+- `pytest` 1031 passed; `ruff check` OK; `mypy app` OK.
+- Real run on a copy of the database with today's 143 events dissolved (Gemini):
+  143 articles -> 134 events with one LLM call (2,688 in / 74 out). Correct merges:
+  Gemini 4 Argon (DeepMind, TechCrunch, Ars Technica, Reddit), "dots" (OpenAI,
+  Wired), the lawsuit against OpenAI (Ars Technica, Wired), the White House pledge
+  typo (Guardian, TechCrunch). One group ignored as unlinked.
+
+**Flagged:**
+- Title-only grouping is loose: one event merged the BBC "dots / safety worries"
+  article with three articles about OpenAI safety delays (model rollout, IPO).
+  The BBC "dots" article did not join the OpenAI "Introducing dots" event.
+- On re-clustering the copy I had to reset `article.status` to `pending`; a real
+  deployment never does this, since only unassigned articles are clustered.
+- Merged events keep the verification rules of TASK-017, so multi-source events
+  are now scored with more than one source; their effect on importance is visible
+  in the data (events with 4 sources reached 6.5) and belongs to TASK-040.
+

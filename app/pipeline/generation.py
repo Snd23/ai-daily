@@ -53,6 +53,7 @@ from app.ai.event_summarizer import (
     summarize_event,
 )
 from app.clustering.article_clusterer import ArticleCluster, cluster_articles
+from app.clustering.cluster_merger import ClusterMergeParseError, merge_similar_clusters
 from app.collectors.article_text import fetch_article_text
 from app.config.settings import APP_TIMEZONE
 from app.database.article import Article
@@ -184,7 +185,12 @@ def generate_edition(
     edition_repository = EditionRepository(connection)
 
     events_created = _analyze_pending_articles(
-        article_repository, source_repository, event_repository, edition_day, lookback_days
+        llm_provider,
+        article_repository,
+        source_repository,
+        event_repository,
+        edition_day,
+        lookback_days,
     )
 
     events_for_edition, failed_events = _compose_editorial_events(
@@ -249,6 +255,7 @@ def generate_edition(
 
 
 def _analyze_pending_articles(
+    llm_provider: LLMProvider,
     article_repository: ArticleRepository,
     source_repository: SourceRepository,
     event_repository: EventRepository,
@@ -257,9 +264,9 @@ def _analyze_pending_articles(
 ) -> int:
     """Cluster, verify, categorize and rank pending articles into `Event` rows.
 
-    Language-neutral and LLM-free: this phase runs once per article, not
-    once per edition language (docs/PRD.md §38). Returns the number of
-    events created.
+    Language-neutral: this phase runs once per article, not once per edition
+    language (docs/PRD.md §38). Its only LLM call is the single cross-source
+    cluster merge (TASK-038). Returns the number of events created.
     """
     clusterable = article_repository.list_clusterable(
         reference_date=edition_day, lookback_days=lookback_days
@@ -268,7 +275,7 @@ def _analyze_pending_articles(
         logger.info("No clusterable article: no new event created")
         return 0
 
-    clusters = cluster_articles(clusterable)
+    clusters = _merge_clusters(llm_provider, cluster_articles(clusterable))
     created = 0
     for index, cluster in enumerate(clusters, start=1):
         try:
@@ -298,6 +305,24 @@ def _analyze_pending_articles(
         "Analysis complete: %d article(s) clustered into %d event(s)", len(clusterable), created
     )
     return created
+
+
+def _merge_clusters(
+    llm_provider: LLMProvider, clusters: list[ArticleCluster]
+) -> list[ArticleCluster]:
+    """Merge clusters about the same event across sources (TASK-038).
+
+    The merge is an improvement, not a requirement: if the LLM call or its
+    answer fails, the exact-title clusters are kept (CLAUDE.md §34).
+    """
+    try:
+        merged = merge_similar_clusters(llm_provider, clusters)
+    except (LLMProviderError, ClusterMergeParseError) as exc:
+        logger.warning("Cross-source cluster merge skipped: %s", exc)
+        return clusters
+    if len(merged) < len(clusters):
+        logger.info("Merged %d cluster(s) into %d", len(clusters), len(merged))
+    return merged
 
 
 def _persist_event(
