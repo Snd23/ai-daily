@@ -53,6 +53,7 @@ from app.ai.event_summarizer import (
     summarize_event,
 )
 from app.clustering.article_clusterer import ArticleCluster, cluster_articles
+from app.collectors.article_text import fetch_article_text
 from app.config.settings import APP_TIMEZONE
 from app.database.article import Article
 from app.database.article_repository import ArticleRepository
@@ -388,7 +389,9 @@ def _compose_editorial_events(
             len(todays_events) - len(eligible),
         )
 
-    for event in _select_events(eligible):
+    # `_select_events` returns the events best-first, so the first
+    # `MAX_TOP_STORIES` are the edition's Top Stories (they get a longer summary).
+    for rank, event in enumerate(_select_events(eligible)):
         assert event.id is not None  # every persisted Event has an id
         try:
             prepared = _prepare_event(
@@ -398,6 +401,7 @@ def _compose_editorial_events(
                 source_repository,
                 content_repository,
                 language=language,
+                is_top_story=rank < MAX_TOP_STORIES,
             )
         except _EVENT_ERRORS as exc:
             logger.warning("Event %d skipped: %s", event.id, exc)
@@ -453,6 +457,7 @@ def _prepare_event(
     content_repository: EventContentRepository,
     *,
     language: str,
+    is_top_story: bool,
 ) -> EventForEdition | None:
     """Assemble one event's `EventForEdition`, or `None` if it has no article with text.
 
@@ -473,7 +478,11 @@ def _prepare_event(
     stored = content_repository.get(event.id, language)
     if stored is None:
         summary, developer_impact = _generate_content(
-            llm_provider, event, contexts, language=language
+            llm_provider,
+            event,
+            _with_full_text(contexts),
+            language=language,
+            is_top_story=is_top_story,
         )
         content_repository.upsert(
             EventContent(
@@ -528,6 +537,7 @@ def _generate_content(
     contexts: list[ArticleContext],
     *,
     language: str,
+    is_top_story: bool,
 ) -> tuple[EventSummary, DeveloperImpact | None]:
     """Run the two LLM stages for one event in one language."""
     assert event.id is not None
@@ -538,6 +548,7 @@ def _generate_content(
             language=language,
             verification_status=event.verification_status,
             articles=contexts,
+            is_top_story=is_top_story,
         ),
     )
     _log_usage("summarize", event.id, language, summary.usage)
@@ -584,6 +595,21 @@ def _log_usage(stage: str, event_id: int, language: str, usage: Usage | None) ->
         usage.input_tokens,
         usage.output_tokens,
     )
+
+
+def _with_full_text(contexts: list[ArticleContext]) -> list[ArticleContext]:
+    """Replace each excerpt with the article's full text when it can be fetched (TASK-031).
+
+    Called only for events whose content is about to be generated, so the pages
+    of events that are not selected, or whose content is already stored, are
+    never downloaded. An article whose page cannot be fetched keeps its RSS
+    excerpt.
+    """
+    enriched = []
+    for context in contexts:
+        text = fetch_article_text(context.url)
+        enriched.append(context.model_copy(update={"excerpt": text}) if text else context)
+    return enriched
 
 
 def _article_context(article: Article, source: Source) -> ArticleContext:

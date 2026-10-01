@@ -1066,6 +1066,10 @@ Summarization does not verify, corroborate or score events, and it does not clas
 * DEVELOPING: cautious language, stating clearly that the situation is still developing.
 * UNVERIFIED: explicitly cautious language; nothing that is not verified is presented as established fact.
 
+Completeness
+
+A summary is complete, not a teaser: a reader who has not seen the sources understands what happened, who is involved, when, the key figures and technical details, the context and why it matters, without opening them. Top Stories are longer than the other stories of the edition. To have enough material, the full text of the sources is used for the events selected for the edition; when a source page cannot be read, its feed excerpt is used instead. Length comes only from the sources: a summary is shorter, never padded or guessed, when the sources hold less.
+
 No invention
 
 A summary may only use information present in the analyzed sources. It must not invent numbers, prices, dates, benchmarks, quotes, statements, features, technical specifications, product names or sources. Information that is not available in the sources is left out rather than guessed.

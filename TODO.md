@@ -56,7 +56,7 @@
 
 - [x] TASK-029 — Switch to the free Gemini provider
 - [x] TASK-030 — Measure LLM token usage of one edition
-- [ ] TASK-031 — Longer, richer story content
+- [x] TASK-031 — Longer, richer story content
 - [x] TASK-032 — Select candidate events before calling the LLM
 - [x] TASK-033 — Rate-limit handling for the LLM provider
 - [x] TASK-034 — Do not publish an empty edition

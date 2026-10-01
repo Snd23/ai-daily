@@ -293,10 +293,14 @@ def _build_story_block(content: EditorialContent) -> Flowable:
     the group flow across pages instead of raising) when a single story is
     too long to fit on one page, so long content remains supported.
     """
-    blocks: list[Flowable] = [
-        Paragraph(_escape(content.title), styles.STORY_TITLE),
-        Paragraph(_escape(content.summary), styles.BODY_TEXT),
-    ]
+    blocks: list[Flowable] = [Paragraph(_escape(content.title), styles.STORY_TITLE)]
+    # A complete summary has several paragraphs (TASK-031); one Paragraph per
+    # line, because Platypus would fold the line breaks into spaces.
+    blocks.extend(
+        Paragraph(_escape(line), styles.BODY_TEXT)
+        for line in content.summary.splitlines()
+        if line.strip()
+    )
     if content.developer_impact is not None:
         blocks.extend(_build_developer_impact_block(content.developer_impact))
     if content.concept_explanation is not None:

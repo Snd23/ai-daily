@@ -420,3 +420,89 @@ payload shape seen in the TASK-032 run).
 
 **Flagged:** the uncommitted `DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"` change
 in `app/llm/anthropic_provider.py` is not part of this task (see chat).
+
+---
+
+## TASK-031 — Longer, richer story content
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** stories are too short and not exhaustive; the reader wants a
+complete summary with all the information needed to understand the news. Root
+cause measured on the real database (average `normalized_text` per article):
+Ars Technica 75 chars, DeepMind 81, BBC 94, OpenAI 155, MIT Tech Review 334,
+Guardian 655, Hugging Face 0. The LLM only sees the RSS excerpt, so no prompt
+can produce a complete summary without inventing facts (CLAUDE.md §17). The
+SUMMARIZE prompt also asks for a "concise" output and sets no length target.
+
+**Decisions (user interview, 2026-10-01):**
+- Text extraction: new dependency `trafilatura` (extracts the article body from
+  arbitrary HTML; alternative `beautifulsoup4` + per-source selectors rejected as
+  fragile).
+- Length scaled by importance: top stories about 250-350 words, the others about
+  120-180 words.
+- Cost control (§35): the full text is fetched and sent only for the events
+  already selected for the edition (about 15), never for all collected articles,
+  with a per-article character cap (about 6000).
+
+**Scope** (to be refined against the code before implementing):
+- a fetcher that downloads an article page and extracts its text with
+  `trafilatura`; page content is untrusted input (§10-11);
+- fetch failures (403, timeout, paywall, empty text) fall back to the RSS excerpt
+  and are logged; they never fail the pipeline (§33-34);
+- `app/ai/event_summarizer.py`: prompt asks for a complete summary with a length
+  target; it must still preserve uncertainty and never add facts;
+- `app/pipeline/generation.py`: fetch step after selection, before the LLM;
+
+**Out of scope:** changing source tiers, ranking, verification, developer impact
+and AI Senza Sbatti prompts, PDF layout redesign, headless-browser rendering of
+JavaScript-only pages.
+
+**Verification:** unit tests (extraction, fallback on error, length cap, prompt);
+`pytest`, `ruff check`, `mypy app`; a real `generate` on today's database
+comparing summary length and token usage before/after, against the free-tier
+limits measured in TASK-030.
+
+**Changes:** `app/collectors/article_text.py` (new: `fetch_article_text`);
+`app/ai/event_summarizer.py` (prompt: complete summary + length target,
+`EventSummaryInput.is_top_story`); `app/pipeline/generation.py` (fetch after
+selection, only when content is not stored; first `MAX_TOP_STORIES` events are
+top stories); `app/newspaper/renderer.py` (one `Paragraph` per summary line,
+added during the task: without it the multi-paragraph summaries were rendered as
+one block); `pyproject.toml`/`uv.lock` (`trafilatura` 2.2.0, brings `lxml` and
+other transitive packages); `tests/conftest.py` (autouse fixture: tests never
+download pages); new and updated tests; `docs/PRD.md` (Completeness),
+`docs/ARCHITECTURE.md` §1.2 and §4.8.
+
+**Verification results:**
+- `pytest` 1008 passed; `ruff check` OK; `mypy app` OK.
+- Real run on a copy of the database (Gemini `gemini-3.5-flash-lite`,
+  `generate --language it`, today's 15 selected events, content regenerated):
+  summary length average 282 -> 1190 characters (max 1837); 15 summaries, 9 with
+  several paragraphs; PDF of 10 pages written.
+- Tokens, 30 calls: summarize 22,899 in / 4,513 out; developer impact 26,169 in /
+  614 out; total about 49k in / 5.1k out per edition (about 1,530 in per summarize
+  call, was 540-660 in TASK-030). No LLM call failed.
+- Page fetch check on real URLs: TechCrunch, BBC, Hugging Face, DeepMind and
+  OpenAI returned text; Ars Technica returned 403 and falls back to the excerpt.
+
+**Flagged / follow-ups:**
+- Events from title-only feeds (Hugging Face: 865 articles, 0 chars of text;
+  DeepMind) are still excluded by TASK-036's eligibility check, which runs before
+  the fetch. Their pages are fetchable (checked), so fetching before the check
+  would make them eligible again. Separate task.
+- Sources that block bots (Ars Technica, The Verge: 403) keep the short RSS
+  excerpt, so their summaries stay short.
+- Top-story summaries came out below the 250-350 word target in the sample
+  (longest 1837 characters, about 280 words); not tuned further.
+- The summary is stored per event once; a Top Story status change on a later day
+  does not regenerate it.
+
+**Review (`/code-review`):** acted on two findings: page text can no longer close
+the prompt's `<article>` block (`</article` is neutralized in
+`fetch_article_text`), and only http(s) URLs are requested. Reported, not done:
+no private-address blocking or response-size cap on page downloads; fetches are
+sequential with no per-event limit on articles or time, and the 6000-character cap
+is per article, not per event; `rank` counts events later skipped, so a skipped
+Top Story leaves the edition with fewer long summaries.
+

@@ -783,3 +783,103 @@ def test_llm_usage_is_logged_not_silently_discarded(
     assert any(
         "stage=developer_impact" in line and "output_tokens=40" in line for line in usage_lines
     )
+
+
+# --- full article text (TASK-031) -------------------------------------------
+
+
+def _summary_prompts(provider: _FakeLLMProvider) -> list[str]:
+    prompts = [
+        "\n".join(message.content for message in request.messages)
+        for request in provider.requests
+    ]
+    return [prompt for prompt in prompts if "HAS_DEVELOPER_IMPACT" not in prompt]
+
+
+def test_the_fetched_article_text_replaces_the_excerpt_in_the_prompt(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        generation_module, "fetch_article_text", lambda url: "FULL TEXT of the article."
+    )
+    _add_article(connection, _add_source(connection))
+    provider = _FakeLLMProvider()
+
+    _generate(connection, output_dir, provider=provider)
+
+    prompt = _summary_prompts(provider)[0]
+    assert "FULL TEXT of the article." in prompt
+    assert "OpenAI released Model X." not in prompt
+
+
+def test_an_unfetchable_page_falls_back_to_the_rss_excerpt(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _add_article(connection, _add_source(connection))
+    provider = _FakeLLMProvider()
+
+    result = _generate(connection, output_dir, provider=provider)
+
+    assert result.events_in_edition == 1
+    assert "OpenAI released Model X." in _summary_prompts(provider)[0]
+
+
+def test_pages_are_not_downloaded_again_when_the_content_is_already_stored(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        generation_module, "fetch_article_text", lambda url: fetched.append(url) or None
+    )
+    _add_article(connection, _add_source(connection))
+
+    _generate(connection, output_dir)
+    _generate(connection, output_dir)
+
+    assert fetched == ["https://openai.com/news/model-x"]
+
+
+def test_pages_of_events_left_out_of_the_selection_are_not_downloaded(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 1)
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        generation_module, "fetch_article_text", lambda url: fetched.append(url) or None
+    )
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    _generate(connection, output_dir)
+
+    assert len(fetched) == 1
+
+
+def test_only_the_top_stories_get_the_longer_length_target(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_TOP_STORIES", 1)
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+    provider = _FakeLLMProvider()
+
+    _generate(connection, output_dir, provider=provider)
+
+    prompts = _summary_prompts(provider)
+    assert sum("Aim for 250 to 350 words" in prompt for prompt in prompts) == 1
+    assert sum("Aim for 120 to 180 words" in prompt for prompt in prompts) == 1
+

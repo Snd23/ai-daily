@@ -32,6 +32,7 @@ dependencies = [
     # typed command signatures, consistent with CLAUDE.md §8; approved over
     # the stdlib `argparse` alternative during TASK-023 FASE 0.
     "typer>=0.27.2",
+    "trafilatura>=2.2.0",
 ]
 
 [project.scripts]
