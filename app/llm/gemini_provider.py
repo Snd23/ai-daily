@@ -35,6 +35,8 @@ client is injected to test this module without any network call.
 
 from __future__ import annotations
 
+from typing import Any
+
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
@@ -86,7 +88,7 @@ class GeminiProvider(LLMProvider):
         except APIError as exc:
             raise LLMProviderError(
                 f"Gemini completion failed: {exc}",
-                retryable=exc.code in _RETRYABLE_STATUS_CODES,
+                retryable=exc.code in _RETRYABLE_STATUS_CODES and not _is_daily_quota(exc),
                 retry_after_seconds=_retry_delay_seconds(exc),
             ) from exc
 
@@ -98,6 +100,32 @@ class GeminiProvider(LLMProvider):
                 output_tokens=response.usage_metadata.candidates_token_count or 0,
             )
         return CompletionResponse(text=text, usage=usage)
+
+
+def _is_daily_quota(exc: APIError) -> bool:
+    """True if a 429 reports an exhausted per-day quota, which a retry cannot fix.
+
+    Gemini lists the exceeded quota in `QuotaFailure.violations[].quotaId`
+    (e.g. `GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
+    """
+    for item in _error_details(exc):
+        violations = item.get("violations")
+        if isinstance(violations, list):
+            for violation in violations:
+                quota_id = violation.get("quotaId") if isinstance(violation, dict) else None
+                if isinstance(quota_id, str) and "PerDay" in quota_id:
+                    return True
+    return False
+
+
+def _error_details(exc: APIError) -> list[dict[str, Any]]:
+    """The `error.details` entries of a Gemini error payload, or an empty list."""
+    payload = exc.details
+    error = payload.get("error") if isinstance(payload, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, list):
+        return []
+    return [item for item in details if isinstance(item, dict)]
 
 
 def _retry_delay_seconds(exc: APIError) -> float | None:

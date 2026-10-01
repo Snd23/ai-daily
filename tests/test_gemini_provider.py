@@ -258,3 +258,37 @@ def test_missing_or_malformed_retry_delay_hint_is_ignored(payload: dict[str, Any
     error = _complete_expecting_error(errors.APIError(429, payload))
 
     assert error.retry_after_seconds is None
+
+
+# --- daily-quota errors (TASK-037) --------------------------------------------
+
+
+def _quota_payload(quota_id: str) -> dict[str, Any]:
+    return {
+        "error": {
+            "message": "quota",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    "violations": [{"quotaId": quota_id}],
+                },
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "45s"},
+            ],
+        }
+    }
+
+
+def test_daily_quota_429_is_not_retryable() -> None:
+    payload = _quota_payload("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+
+    error = _complete_expecting_error(errors.APIError(429, payload))
+
+    assert error.retryable is False
+
+
+def test_per_minute_quota_429_stays_retryable() -> None:
+    payload = _quota_payload("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+
+    error = _complete_expecting_error(errors.APIError(429, payload))
+
+    assert error.retryable is True

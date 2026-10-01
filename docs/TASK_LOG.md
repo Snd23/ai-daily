@@ -390,8 +390,33 @@ call, but the exclusion is checked on the real database (events 2330, 2331,
 
 ## TASK-037 — Fail fast on daily-quota errors
 
-**Status:** PLANNED. **Motivation:** a 429 whose quota is per day cannot succeed
-on retry; `RetryingProvider` currently waits and retries it three times per call.
-**Open decision:** how the provider signals "not retryable until tomorrow"
-(e.g. `retryable=False` when the quota id contains `PerDay`).
+**Status:** DONE (awaiting approval/commit).
 
+**Motivation:** a 429 whose quota is per day cannot succeed on retry;
+`RetryingProvider` waited and retried it three times per call (about 2 minutes
+per call, seen in the TASK-032 run).
+
+**Decision (local, small; CLAUDE.md §36):** `GeminiProvider` marks a 429 as
+`retryable=False` when any violation in the error's `QuotaFailure` details has a
+`quotaId` containing `PerDay` (real example:
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). Per-minute 429s and 503s
+stay retryable. `RetryingProvider` is unchanged: it already raises
+non-retryable errors immediately.
+
+**Scope:** `app/llm/gemini_provider.py`, its tests, `docs/ARCHITECTURE.md` §2.1.
+
+**Out of scope:** stopping the whole run after the first daily-quota error (each
+remaining event still makes one fast failing call), other providers.
+
+**Verification:** unit tests (daily 429 not retryable, per-minute 429 retryable,
+payload without details); `pytest`, `ruff check`, `mypy app`.
+
+**Changes:** `app/llm/gemini_provider.py` (`_is_daily_quota`, `_error_details`);
+two tests in `tests/test_gemini_provider.py`; `docs/ARCHITECTURE.md` §2.1.
+
+**Verification results:** `pytest` 994 passed; `ruff check` OK; `mypy app` OK.
+No real daily-quota 429 was reproduced end to end (unit tests use the real
+payload shape seen in the TASK-032 run).
+
+**Flagged:** the uncommitted `DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"` change
+in `app/llm/anthropic_provider.py` is not part of this task (see chat).

@@ -62,4 +62,4 @@
 - [x] TASK-034 — Do not publish an empty edition
 - [x] TASK-035 — Use a Gemini model with a larger free daily quota
 - [x] TASK-036 — Events whose articles have no excerpt
-- [ ] TASK-037 — Fail fast on daily-quota errors
+- [x] TASK-037 — Fail fast on daily-quota errors
