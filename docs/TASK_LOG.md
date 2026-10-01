@@ -137,22 +137,56 @@ scratchpad. Re-running `generate` today reuses these events and overwrites that 
 
 ## TASK-032 — Select candidate events before calling the LLM
 
-**Status:** PLANNED.
+**Status:** COMPLETED (2026-10-01); real run confirmed in TASK-035.
 
-**Motivation:** the run above sent all 101 events to the LLM. CLAUDE.md §35
-describes filtering/ranking first, so only the top candidates (about 15) are
-summarized. This is also what makes a free tier workable (about 30 calls per
-edition instead of 202).
+**Motivation:** the TASK-030 run sent all 101 events to the LLM. CLAUDE.md §35
+describes filtering/ranking first, so only the top candidates are summarized.
+This is also what makes the free tier workable (about 30 calls per edition
+instead of 202).
 
-**Open decisions:** how many events (N), whether the limit is a configuration
-value, and whether low-importance or `UNVERIFIED` events are dropped or only
-left without LLM content.
+**Decisions (user, 2026-10-01):**
+- N = 15 events per edition, a constant (`MAX_EDITION_EVENTS`) in
+  `app/pipeline/generation.py`, next to `MAX_TOP_STORIES`; not a setting.
+- Selection order: `importance_score` descending; on equal importance,
+  verification status first (`VERIFIED`, `PARTIALLY_VERIFIED`, `DEVELOPING`,
+  `UNVERIFIED`); then `id` ascending. `UNVERIFIED` events are not excluded.
 
-**Out of scope:** clustering quality (101 articles -> 101 events suggests
-clustering merges little; to be analyzed separately), new sections, longer content.
+**Scope:**
+- `app/pipeline/generation.py`: select the top N of the day's events before the
+  per-event LLM stage; log how many events were selected out of how many;
+- tests in `tests/test_pipeline_generation.py`; documentation (ARCHITECTURE §4.14).
 
-**Verification:** tests for the selection; one real run shows the number of LLM
-calls equals 2 x N.
+**Out of scope:** clustering quality (101 articles -> 101 events is analyzed
+separately), backfilling when a selected event fails, changing importance
+scoring, a configurable N.
+
+**Behavior notes:** events not selected stay persisted without content; the
+selection is deterministic, so re-running or generating another language the
+same day picks the same events and reuses their stored content.
+
+**Verification:** tests (cap respected, order by importance, verified wins ties,
+LLM calls equal 2 x selected events); `pytest`, `ruff check`, `mypy app`.
+
+**Results (2026-10-01):**
+- `pytest`: 985 passed (4 new). `ruff check`: OK. `mypy app`: OK.
+- Real run (`ai-daily generate --language it`): log line `Selected 15 of 101
+  event(s) for the edition` -- the selection works on real data.
+- The real run could not produce summaries: every call returned
+  `429 RESOURCE_EXHAUSTED`, quota `GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+  **limit 20 requests per day** for `gemini-3.8-flash` (model-specific, global).
+  Today's 20 requests were already used by earlier checks and runs. I stopped the
+  run manually after it was clear nothing could succeed.
+- Consequence for planning: at 2 calls per event the free tier of this model
+  allows at most 10 events per day, so N = 15 (30 calls) does not fit. This is
+  a finding about the provider quota, not a defect of the selection.
+
+**Follow-ups (new decisions needed):**
+- Daily quota vs N: lower N, merge the two calls per event into one, or use a
+  different free model/provider with a larger daily quota (limits are shown in
+  Google AI Studio and change over time).
+- `RetryingProvider` retries a daily-quota 429 (waits ~26-47 s three times per
+  call), which cannot succeed until the next day; it should fail fast on
+  `PerDay` quotas.
 
 ---
 
@@ -247,3 +281,77 @@ source-grounded summary.
 
 **Verification:** to be defined in the spec; at minimum tests, lint, type
 check and one real edition compared before/after.
+
+---
+
+## TASK-035 — Use a Gemini model with a larger free daily quota
+
+**Status:** COMPLETED (2026-10-01).
+
+**Motivation:** TASK-032 showed `gemini-3.8-flash` allows only 20 requests per
+day on the free tier (quota is per model), i.e. 10 events per day at 2 calls each.
+
+**Decision (user, 2026-10-01):** use another free model. One real call per
+candidate on 2026-10-01: `gemini-3.5-flash-lite` (1.2 s), `gemini-3.1-flash-lite`
+(2.2 s), `gemini-3.6-flash` (1.6 s), `gemini-3.5-flash` (11 s) and
+`gemini-3.7-flash` (84 s) answered; `gemini-2.5-flash` and `gemini-2.5-flash-lite`
+return 404 (no longer available). Third-party guides report about 500 requests/day for the
+Flash-Lite models and about 20 for `3.5-flash`; Google does not publish fixed
+numbers, so these are **unverified** -- the real limit is visible in AI Studio
+(https://aistudio.google.com/rate-limit). Chosen: `gemini-3.5-flash-lite`.
+
+**Scope:** change `DEFAULT_GEMINI_MODEL` in `app/llm/gemini_provider.py` and the
+documentation that names the old default. No new setting (a constant, like the
+other providers' defaults).
+
+**Out of scope:** fast-failing on daily-quota 429s (separate follow-up), merging
+the two LLM calls, changing prompts, other providers.
+
+**Risk:** Flash-Lite is a smaller model; summary quality must be checked on a
+real edition (CLAUDE.md §17: no invented facts).
+
+**Verification:** `pytest`, `ruff check`, `mypy app`; one real
+`ai-daily generate --language it` run that completes, and a read of the
+resulting PDF text.
+
+**Results:**
+- `pytest`: 985 passed. `ruff check`: OK. `mypy app`: OK.
+- Real run with `gemini-3.5-flash-lite`, `LLM_MIN_INTERVAL_SECONDS=13`
+  (`ai-daily generate --language it`, 15 of 101 events selected): 22 LLM calls
+  succeeded, no 429/503 and no retry, about 5 minutes in total. The 4 other events were not
+  generated because of an unrelated problem (below). Edition 2 of 2026-10-01 now
+  has 11 events and 4 pages, built from articles of 29-30 September.
+- Token usage (completes TASK-030): 11 summarize calls = 6,241 in / 930 out
+  (about 570 / 85 per call); 11 developer-impact calls = 10,003 in / 244 out
+  (about 910 / 22 per call). One edition of 11 events = about 16.2k in / 1.2k out.
+- Quality check by reading the PDF text: the summaries are short, faithful to the
+  excerpts and in Italian; no invented figures seen in the first two pages. A full
+  editorial review is not part of this task.
+- The real daily limit of `gemini-3.5-flash-lite` is still unverified (22 requests
+  were used without hitting it); check AI Studio.
+
+**Findings, not fixed here (new tasks, TASK-036 and TASK-037):**
+- 4 of the 15 selected events were skipped with `ArticleContext ... excerpt: must
+  not be blank`: an article with an empty `normalized_text` and `raw_excerpt`
+  makes the whole event fail before any LLM call, and wastes a selection slot.
+- `RetryingProvider` should fail fast on a daily-quota 429 (see TASK-032).
+- Observation: Top Stories are printed again in their category section, so the
+  same story appears twice in the PDF; confirm whether this is intended
+  (docs/PRD.md §17) before treating it as a defect.
+
+---
+
+## TASK-036 — Events whose articles have no excerpt
+
+**Status:** PLANNED. **Motivation:** 4 of 15 selected events were dropped in the
+TASK-035 run because an article had no text at all. **Open decisions:** drop such
+articles before clustering, keep the event using only the other articles'
+excerpts, or summarize from the title alone (risky for CLAUDE.md §17).
+
+## TASK-037 — Fail fast on daily-quota errors
+
+**Status:** PLANNED. **Motivation:** a 429 whose quota is per day cannot succeed
+on retry; `RetryingProvider` currently waits and retries it three times per call.
+**Open decision:** how the provider signals "not retryable until tomorrow"
+(e.g. `retryable=False` when the quota id contains `PerDay`).
+

@@ -24,6 +24,7 @@ from app.database.article import Article
 from app.database.article_repository import ArticleRepository
 from app.database.connection import get_connection
 from app.database.edition_repository import EditionRepository
+from app.database.event import Event, VerificationStatus
 from app.database.event_content_repository import EventContentRepository
 from app.database.event_repository import EventRepository
 from app.database.migrations import run_migrations
@@ -412,6 +413,76 @@ def test_a_second_language_reuses_the_events_of_the_first(
     assert italian.edition_number != english.edition_number
     assert italian.pdf_path.name == "2026-09-16-it.pdf"
     assert english.pdf_path.exists() and italian.pdf_path.exists()
+
+
+# --- event selection before the LLM (TASK-032) -------------------------------
+
+
+def _event(event_id: int, importance: float, status: VerificationStatus = "VERIFIED") -> Event:
+    return Event(
+        id=event_id,
+        verification_status=status,
+        confidence_score=5.0,
+        importance_score=importance,
+        event_type="standard",
+        created_at="2026-09-16T10:00:00+02:00",
+    )
+
+
+def test_selection_keeps_the_most_important_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 2)
+    events = [_event(1, 3.0), _event(2, 9.0), _event(3, 6.0), _event(4, 1.0)]
+
+    selected = generation_module._select_events(events)
+
+    assert [event.id for event in selected] == [2, 3]
+
+
+def test_selection_prefers_the_better_verified_event_on_equal_importance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 2)
+    events = [
+        _event(1, 5.0, "UNVERIFIED"),
+        _event(2, 5.0, "DEVELOPING"),
+        _event(3, 5.0, "VERIFIED"),
+        _event(4, 5.0, "PARTIALLY_VERIFIED"),
+    ]
+
+    selected = generation_module._select_events(events)
+
+    assert [event.id for event in selected] == [3, 4]
+
+
+def test_selection_does_not_exclude_unverified_events_when_there_is_room() -> None:
+    events = [_event(1, 5.0, "UNVERIFIED"), _event(2, 6.0)]
+
+    selected = generation_module._select_events(events)
+
+    assert {event.id for event in selected} == {1, 2}
+
+
+def test_only_the_selected_events_reach_the_llm(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 1)
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+    provider = _FakeLLMProvider()
+
+    result = _generate(connection, output_dir, provider=provider)
+
+    assert _count(connection, "event") == 2
+    assert result.events_in_edition == 1
+    assert _count(connection, "event_content") == 1
+    assert len(provider.requests) == 2  # summarize + developer impact, for one event only
 
 
 # --- per-event error handling -------------------------------------------------

@@ -42,7 +42,9 @@ from google.genai.errors import APIError
 from app.llm.errors import LLMProviderError
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Message, Usage
 
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+# Flash-Lite tier: `gemini-3.8-flash` is limited to 20 requests/day on the free
+# tier (TASK-032), too few for two calls per event; the quota is per model.
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 _ROLE_MAP: dict[str, str] = {"user": "user", "assistant": "model"}
 

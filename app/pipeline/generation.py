@@ -82,6 +82,14 @@ logger = logging.getLogger(__name__)
 # lists three stories.
 MAX_TOP_STORIES = 3
 
+# Maximum number of events per edition that reach the LLM stages (TASK-032,
+# CLAUDE.md §35: filter and rank locally before spending LLM calls; two calls
+# per event). The rest of the day's events stay persisted without content.
+MAX_EDITION_EVENTS = 15
+
+# Tie-break between events of equal importance: better-verified first.
+_VERIFICATION_ORDER = {"VERIFIED": 0, "PARTIALLY_VERIFIED": 1, "DEVELOPING": 2, "UNVERIFIED": 3}
+
 # Errors that affect one event only. Every one of them is raised by an
 # already-implemented stage on a per-event basis, so the run logs it,
 # leaves that event out of the edition and continues with the others
@@ -345,7 +353,7 @@ def _compose_editorial_events(
     events_for_edition: list[EventForEdition] = []
     failed: list[tuple[int, str]] = []
 
-    for event in event_repository.list_by_created_date(edition_day.isoformat()):
+    for event in _select_events(event_repository.list_by_created_date(edition_day.isoformat())):
         assert event.id is not None  # every persisted Event has an id
         try:
             prepared = _prepare_event(
@@ -365,6 +373,25 @@ def _compose_editorial_events(
             events_for_edition.append(prepared)
 
     return events_for_edition, failed
+
+
+def _select_events(events: list[Event]) -> list[Event]:
+    """Keep the `MAX_EDITION_EVENTS` best events: importance first, then verification.
+
+    Deterministic (ties end on `id`), so a re-run or another language of the
+    same day selects the same events and reuses their stored content.
+    """
+    ranked = sorted(
+        events,
+        key=lambda event: (
+            -event.importance_score,
+            _VERIFICATION_ORDER[event.verification_status],
+            event.id if event.id is not None else 0,
+        ),
+    )
+    selected = ranked[:MAX_EDITION_EVENTS]
+    logger.info("Selected %d of %d event(s) for the edition", len(selected), len(events))
+    return selected
 
 
 def _prepare_event(
