@@ -59,7 +59,7 @@
 - [ ] TASK-031 — Longer, richer story content
 - [x] TASK-032 — Select candidate events before calling the LLM
 - [x] TASK-033 — Rate-limit handling for the LLM provider
-- [ ] TASK-034 — Do not publish an empty edition
+- [x] TASK-034 — Do not publish an empty edition
 - [x] TASK-035 — Use a Gemini model with a larger free daily quota
 - [x] TASK-036 — Events whose articles have no excerpt
 - [ ] TASK-037 — Fail fast on daily-quota errors

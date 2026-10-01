@@ -104,6 +104,18 @@ _EVENT_ERRORS = (
 )
 
 
+class EmptyEditionError(Exception):
+    """Raised when an edition would contain no event (TASK-034).
+
+    `failed_events` lists the `(event_id, error)` pairs of the events whose
+    generation failed; it is empty when there was simply nothing to publish.
+    """
+
+    def __init__(self, message: str, failed_events: list[tuple[int, str]]) -> None:
+        super().__init__(message)
+        self.failed_events = failed_events
+
+
 @dataclass
 class GenerationResult:
     """Outcome of one `generate_edition` call."""
@@ -150,6 +162,9 @@ def generate_edition(
         A `GenerationResult` describing what was created.
 
     Raises:
+        EmptyEditionError: if the edition would contain no event, either
+            because there was none or because every one failed. No PDF is
+            written and the edition row is marked `failed` (TASK-034).
         sqlite3.Error, OSError: genuine infrastructure failures, which are
             never caught here.
         ValueError: if an already-persisted edition's row is inconsistent
@@ -181,9 +196,21 @@ def generate_edition(
         edition_day=edition_day,
     )
 
-    edition = assemble_edition(language, events_for_edition, MAX_TOP_STORIES)
     record = _edition_record(edition_repository, edition_day, language)
     assert record.id is not None  # set by EditionRepository.create/_from_row
+
+    if not events_for_edition:
+        # A rerun must not downgrade an edition that was already published.
+        if record.status != "published":
+            edition_repository.update_status(record.id, "failed")
+        raise EmptyEditionError(
+            f"all {len(failed_events)} event(s) failed to generate"
+            if failed_events
+            else "no event available for this edition",
+            failed_events,
+        )
+
+    edition = assemble_edition(language, events_for_edition, MAX_TOP_STORIES)
 
     pdf = render_edition(
         edition,

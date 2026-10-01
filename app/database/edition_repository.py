@@ -88,6 +88,20 @@ class EditionRepository:
         if cursor.rowcount == 0:
             raise ValueError(f"No edition found with id={edition_id}")
 
+    def update_status(self, edition_id: int, status: EditionStatus) -> None:
+        """Set this edition's status, leaving `pdf_path` untouched.
+
+        Raises:
+            ValueError: if no row has `edition_id`.
+        """
+        cursor = self._connection.execute(
+            "UPDATE edition SET status = :status WHERE id = :id",
+            {"id": edition_id, "status": status},
+        )
+        self._connection.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"No edition found with id={edition_id}")
+
 
 def _from_row(row: Any) -> EditionRecord:
     return EditionRecord(

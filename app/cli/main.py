@@ -45,7 +45,7 @@ from app.deduplication import deduplicate_pending_articles
 from app.llm import RetryingProvider, create_llm_provider
 from app.logging_config import configure_logging
 from app.normalization import normalize_pending_articles
-from app.pipeline import generate_edition
+from app.pipeline import EmptyEditionError, generate_edition
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,11 @@ def generate(
             output_dir=_editions_dir(settings),
             lookback_days=settings.news_lookback_days,
         )
+    except EmptyEditionError as exc:
+        typer.echo(f"generate failed: {exc}; no PDF written.", err=True)
+        for event_id, error in exc.failed_events:
+            typer.echo(f"  - event {event_id}: {error}", err=True)
+        raise typer.Exit(code=1) from exc
     except _CRITICAL_ERRORS as exc:
         typer.echo(f"generate failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc

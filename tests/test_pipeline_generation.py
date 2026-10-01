@@ -33,7 +33,7 @@ from app.database.source_repository import SourceRepository
 from app.llm.errors import LLMProviderError
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Usage
 from app.pipeline import generation as generation_module
-from app.pipeline.generation import generate_edition
+from app.pipeline.generation import EmptyEditionError, generate_edition
 
 _EDITION_DATE = date(2026, 9, 16)
 _SUMMARY_RESPONSE = "TITLE: OpenAI ships Model X\nSUMMARY: OpenAI released Model X on Monday."
@@ -156,6 +156,21 @@ def _generate(
     )
 
 
+def _generate_expecting_empty(
+    connection: sqlite3.Connection, output_dir: Path, **kwargs: Any
+) -> EmptyEditionError:
+    """Run generation expecting `EmptyEditionError`; no PDF may have been written."""
+    with pytest.raises(EmptyEditionError) as exc_info:
+        _generate(connection, output_dir, **kwargs)
+    assert not list(output_dir.glob("*.pdf"))
+    return exc_info.value
+
+
+def _edition_status(connection: sqlite3.Connection) -> str:
+    row = connection.execute("SELECT status FROM edition").fetchone()
+    return str(row[0])
+
+
 # --- analysis phase: Article -> Event ---------------------------------------
 
 
@@ -223,10 +238,10 @@ def test_unnormalized_articles_are_not_clustered(
     source = _add_source(connection)
     _add_article(connection, source, normalized_text=None, content_hash=None)
 
-    result = _generate(connection, output_dir)
+    error = _generate_expecting_empty(connection, output_dir)
 
-    assert result.events_created == 0
-    assert result.events_in_edition == 0
+    assert _count(connection, "event") == 0
+    assert error.failed_events == []
 
 
 # --- freshness (TASK-028) ----------------------------------------------------
@@ -240,10 +255,10 @@ def test_an_article_older_than_the_lookback_window_creates_no_event(
     source = _add_source(connection)
     _add_article(connection, source, published_at="2026-09-01T08:00:00+00:00")
 
-    result = _generate(connection, output_dir, lookback_days=2)
+    error = _generate_expecting_empty(connection, output_dir, lookback_days=2)
 
-    assert result.events_created == 0
-    assert result.events_in_edition == 0
+    assert _count(connection, "event") == 0
+    assert error.failed_events == []
 
 
 def test_an_article_with_no_published_at_still_creates_an_event(
@@ -352,13 +367,33 @@ def test_an_unverified_event_is_kept_out_of_top_stories(
     assert record is not None  # the edition is still produced
 
 
-def test_an_empty_database_still_produces_an_edition(
+def test_an_empty_database_raises_and_writes_no_pdf(
     connection: sqlite3.Connection, output_dir: Path
 ) -> None:
-    result = _generate(connection, output_dir)
+    error = _generate_expecting_empty(connection, output_dir)
 
-    assert result.events_in_edition == 0
-    assert result.pdf_path.exists()
+    assert "no event available" in str(error)
+    assert error.failed_events == []
+    assert _edition_status(connection) == "failed"
+
+
+def test_an_already_published_edition_is_not_downgraded_by_an_empty_rerun(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _seed_one_event(connection)
+    first = _generate(connection, output_dir)
+    assert _edition_status(connection) == "published"
+    # Every stored event content is gone and the provider now always fails.
+    connection.execute("DELETE FROM event_content")
+    connection.commit()
+
+    with pytest.raises(EmptyEditionError):
+        _generate(
+            connection, output_dir, provider=_FakeLLMProvider(fail_with=LLMProviderError("down"))
+        )
+
+    assert _edition_status(connection) == "published"
+    assert first.pdf_path.exists()
 
 
 # --- rerun / idempotency ------------------------------------------------------
@@ -568,15 +603,14 @@ def test_an_event_whose_generation_fails_is_skipped_and_reported(
     _seed_one_event(connection)
     provider = _FakeLLMProvider(summary_response="not a valid response")
 
-    result = _generate(connection, output_dir, provider=provider)
+    error = _generate_expecting_empty(connection, output_dir, provider=provider)
 
-    assert result.events_in_edition == 0
-    assert len(result.failed_events) == 1
+    assert "all 1 event(s) failed" in str(error)
+    assert len(error.failed_events) == 1
     # The event itself is still persisted: only its content generation failed.
     assert _count(connection, "event") == 1
     assert _count(connection, "event_content") == 0
-    # Partial success: an edition is still produced (CLAUDE.md §34).
-    assert result.pdf_path.exists()
+    assert _edition_status(connection) == "failed"
 
 
 def test_a_failing_event_does_not_prevent_the_others(
@@ -640,12 +674,11 @@ def test_a_cluster_whose_event_assignment_fails_is_skipped_not_crashed(
 
     monkeypatch.setattr(ArticleRepository, "assign_event", _failing_assign_event)
 
-    result = _generate(connection, output_dir)
+    # Nothing could be created, so there is nothing to publish.
+    _generate_expecting_empty(connection, output_dir)
 
-    assert result.events_created == 0
-    assert result.events_in_edition == 0
-    # An edition is still produced -- partial success, not total failure.
-    assert result.pdf_path.exists()
+    assert _count(connection, "event") == 1  # the Event row itself was written first
+    assert _count(connection, "event_content") == 0
 
 
 def test_a_failing_cluster_does_not_prevent_other_clusters_from_succeeding(

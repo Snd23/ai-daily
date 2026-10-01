@@ -246,41 +246,45 @@ Gemini was frequent today, so a worst-case wait of 65 s per call is possible.
 
 ## TASK-034 — Do not publish an empty edition
 
-**Status:** PLANNED.
+**Status:** COMPLETED (2026-10-01).
 
-**Motivation:** with 0 usable events the pipeline still wrote a PDF and set the
-edition status to `published`, reporting exit code 0. CLAUDE.md §34 says a
-critical failure must fail explicitly and legibly.
+**Motivation:** with 0 usable events the pipeline wrote a PDF, set the edition
+status to `published` and exited with code 0 (seen in the TASK-030 run).
+CLAUDE.md §34: a critical failure must fail explicitly and legibly.
 
-**Open decisions:** fail with a clear error and non-zero exit code, or write
-nothing; and what status the edition row keeps.
+**Decisions (user, 2026-10-01):**
+- Every event failed, or there are no events at all: both cases are an error.
+  `generate` (and therefore `run`) exits with code 1, writes no PDF and prints a
+  clear message (which of the two cases it is, and the per-event errors).
+- The edition row is marked `failed`. This reverses the TASK-024 choice that an
+  empty database still produces an edition (test
+  `test_an_empty_database_still_produces_an_edition`, to be replaced).
 
-**Verification:** a test with a provider that always fails; the CLI exits
-non-zero and no `published` row is created.
+**Scope:**
+- `app/pipeline/generation.py`: new `EmptyEditionError`, raised when the edition
+  has no event, before any rendering; the edition row is marked `failed`, unless
+  it is already `published` (a rerun must not downgrade a good edition);
+- `app/database/edition_repository.py`: `update_status`;
+- `app/cli/main.py`: `generate` turns the error into a message and exit code 1;
+- tests; documentation (ARCHITECTURE §4.14, README usage).
+
+**Out of scope:** retrying failed events later, partial-edition thresholds
+(e.g. failing when only 1 of 15 events succeeds), notifications.
+
+**Verification:** tests for both cases (no event, all events fail), the row
+status, the preserved `published` edition, and the CLI exit code; `pytest`,
+`ruff check`, `mypy app`.
 
 ---
 
-## TASK-031 — Longer, richer story content
-
-**Status:** PLANNED — needs a spec (interview) after TASK-030.
-
-**Motivation:** stories are 2-4 lines because the summarizer only receives the
-article title and RSS excerpt; full article text is never fetched.
-
-**Scope (to be refined):** decide and implement how more source material
-reaches the summarizer, and how the prompts ask for a longer, still
-source-grounded summary.
-
-**Open product decisions (to ask before implementing):**
-- fetch full article text (new collector step, treated as untrusted input per
-  CLAUDE.md §10-11) or only use longer feed excerpts?
-- which sources allow it (robots/terms), and what happens when fetching fails?
-- target length per story, within the free-tier budget measured in TASK-030.
-
-**Out of scope:** new sections (AI SENZA SBATTI, WHAT TO WATCH), provider changes.
-
-**Verification:** to be defined in the spec; at minimum tests, lint, type
-check and one real edition compared before/after.
+**Results:**
+- `pytest`: 992 passed (7 new or rewritten for the new behavior: 5 existing tests
+  that asserted an empty edition were adapted). `ruff check`: OK. `mypy app`: OK.
+- Real CLI run on an empty temporary database: message `generate failed: no event
+  available for this edition; no PDF written.`, exit code 1, no PDF.
+- Formatting: remaining `ruff format` differences in the touched files are
+  pre-existing (`NewspaperMetadata(...)` call, `_fail_second_call`, `main.py`,
+  `test_cli.py`).
 
 ---
 

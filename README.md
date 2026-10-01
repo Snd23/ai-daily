@@ -56,7 +56,7 @@ Four commands are defined, per docs/PRD.md §32:
 
 - `ai-daily collect` — syncs `config/sources.yaml` into the database and fetches every active RSS source (TASK-007), persisting new articles no older than `NEWS_LOOKBACK_DAYS` (TASK-028; an article with no publication date is always kept).
 - `ai-daily process` — normalizes (TASK-008) and deduplicates (TASK-009) every `pending` article already collected.
-- `ai-daily generate [--language it|en]` — turns the articles already collected and processed into one edition: clusters them into events, verifies and ranks them, persists the `Event` and its generated content, assembles the newspaper and writes the PDF. Defaults to `DEFAULT_LANGUAGE`; one invocation produces one language.
+- `ai-daily generate [--language it|en]` — turns the articles already collected and processed into one edition: clusters them into events, verifies and ranks them, persists the `Event` and its generated content, assembles the newspaper and writes the PDF. Defaults to `DEFAULT_LANGUAGE`; one invocation produces one language. If no event can be included (none available, or every event failed to generate) it exits with code 1 and writes no PDF.
 - `ai-daily run [--language it|en]` — the full pipeline in one command: `collect`, then `process`, then `generate`. Stops at the first stage that fails.
 
 `generate` and `run` call the configured LLM provider (summarization and Developer Impact), so `LLM_PROVIDER` and the matching API key must be set. The PDF is written next to the database, as `<database directory>/editions/<date>-<language>.pdf` (for the default `DATABASE_URL`, `data/editions/`), and its path is recorded on the edition row.

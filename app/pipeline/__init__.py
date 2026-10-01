@@ -14,9 +14,10 @@ no owner before: deterministic category assignment
 (docs/ARCHITECTURE.md §4.13, §4.14).
 """
 
-from app.pipeline.generation import GenerationResult, generate_edition
+from app.pipeline.generation import EmptyEditionError, GenerationResult, generate_edition
 
 __all__ = [
+    "EmptyEditionError",
     "GenerationResult",
     "generate_edition",
 ]
