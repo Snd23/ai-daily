@@ -75,7 +75,7 @@ Implementation status (up to TASK-028):
 | NORMALIZE | `app/normalization/` | implemented (TASK-008): HTML stripping, text normalization, `content_hash`, language detection |
 | FILTER | `app/collectors/rss.py`, `app/database/article_repository.py` | **recency only** implemented (TASK-028, §4.15): the original proposal's source-tier and keyword heuristics remain not implemented, and no separate `app/filtering/` module was created |
 | DEDUPLICATE | `app/deduplication/` | implemented (TASK-009) as exact duplicate detection on `content_hash`; the rapidfuzz near-duplicate proposal was not adopted |
-| CLUSTER EVENTS | `app/clustering/` | implemented (TASK-012), see §4.1a; lives in `app/clustering/`, not `app/deduplication/` |
+| CLUSTER EVENTS | `app/clustering/` | implemented (TASK-012), see §4.1a; cross-source merge by LLM added in TASK-038, see §4.1b; lives in `app/clustering/`, not `app/deduplication/` |
 | VERIFY | `app/verification/` | implemented (TASK-017), deterministic, in-memory, see §4.3a; never produces `DEVELOPING`; no hedging-language detection |
 | CLASSIFY | `app/pipeline/categories.py` | not implemented as specified (no LLM classifier); TASK-024 replaces it with deterministic category assignment from `Source.categories`, see §4.14 |
 | RANK | `app/ranking/` | implemented (TASK-013), deterministic, see §4.2a |
@@ -201,6 +201,17 @@ No technical guidance in the PRD (§8). Original MVP proposal (**historical, not
 `app/clustering/article_clusterer.py` implements clustering as a deterministic exact match on a normalized title: HTML-unescape → Unicode NFKC normalize → casefold → replace punctuation with whitespace → collapse whitespace. Two articles are grouped together if and only if their normalized titles are identical and non-empty. No fuzzy matching, no semantic/embedding similarity, no LLM, no source tier/reliability weighting, and no time window are used.
 
 `cluster_articles()` returns in-memory `ArticleCluster` objects only. It does not persist an `Event` row and does not write `Article.event_id`, which stays `NULL` throughout its execution (see §4.7).
+
+#### 4.1b Cross-source merge (TASK-038)
+
+The exact-title rule of §4.1a never joins outlets that title the same event differently ("Introducing dots" / "OpenAI's Dots Are Always-On AI Agents..."): on a real day 143 articles gave 143 events. `app/clustering/cluster_merger.py` (`merge_similar_clusters`) is a second stage applied to the `ArticleCluster` list, with at most one `LLMProvider.complete()` call per run:
+
+- **Candidates (rules).** Two clusters are linked when their publication times are within 48 hours (a missing date does not exclude) and their titles share a distinctive word: at least 4 letters, not a stopword, present in the titles of 2 to 6 clusters. Clusters with no link are never sent. Shared words alone are not selective (125 of 143 titles had a link), so the rules define the candidate graph and the LLM decides.
+- **LLM call.** One call over the linked titles (up to 150, about 20 tokens each; 2,688 input tokens for 143 titles). The prompt treats titles as untrusted data and asks only for `GROUP: n, n, ...` lines about the same specific event, or `NONE`.
+- **Validation.** A malformed response (any other line, repeated or out-of-range numbers, an item in two groups, an empty response) raises `ClusterMergeParseError` and nothing is merged. A well-formed group whose members are not connected in the candidate graph is ignored on its own and logged.
+- **Failure policy.** `app.pipeline.generation._merge_clusters` catches `LLMProviderError` and `ClusterMergeParseError`, logs a warning and keeps the exact-title clusters (CLAUDE.md §34).
+- **Scope.** The merger only groups: verification (§4.3), importance and categories are unchanged. It runs in the analysis phase on articles not yet assigned to an event; existing events are not recomputed. The analysis phase is therefore no longer LLM-free (one call per run, not per language).
+- **Known limit.** The decision uses titles only, so a loosely related article can join a group (real example: an article about the "dots" launch and the delay of a model release in the same event as three articles about OpenAI safety delays).
 
 ### 4.2 Importance score
 PRD §10 lists the factors but not their weights. Original proposal (**historical, not adopted** — superseded by the TASK-013 implementation in §4.2a): a hybrid score where the LLM (`rank()`) returns a score with a textual rationale (for audit), corrected by auditable deterministic modifiers (tier of the sources involved, number of independent sources, `event_type`). A purely LLM, unweighted score would be poorly reproducible.
