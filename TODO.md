@@ -61,5 +61,5 @@
 - [x] TASK-033 — Rate-limit handling for the LLM provider
 - [ ] TASK-034 — Do not publish an empty edition
 - [x] TASK-035 — Use a Gemini model with a larger free daily quota
-- [ ] TASK-036 — Events whose articles have no excerpt
+- [x] TASK-036 — Events whose articles have no excerpt
 - [ ] TASK-037 — Fail fast on daily-quota errors

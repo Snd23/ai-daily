@@ -353,7 +353,15 @@ def _compose_editorial_events(
     events_for_edition: list[EventForEdition] = []
     failed: list[tuple[int, str]] = []
 
-    for event in _select_events(event_repository.list_by_created_date(edition_day.isoformat())):
+    todays_events = event_repository.list_by_created_date(edition_day.isoformat())
+    eligible = [event for event in todays_events if _has_article_text(event, article_repository)]
+    if len(eligible) < len(todays_events):
+        logger.info(
+            "%d event(s) excluded: none of their articles has any text",
+            len(todays_events) - len(eligible),
+        )
+
+    for event in _select_events(eligible):
         assert event.id is not None  # every persisted Event has an id
         try:
             prepared = _prepare_event(
@@ -373,6 +381,22 @@ def _compose_editorial_events(
             events_for_edition.append(prepared)
 
     return events_for_edition, failed
+
+
+def _has_text(article: Article) -> bool:
+    """True if the article has a non-blank excerpt to ground a summary on."""
+    return bool((article.normalized_text or article.raw_excerpt or "").strip())
+
+
+def _has_article_text(event: Event, article_repository: ArticleRepository) -> bool:
+    """True if at least one of the event's articles has text (TASK-036).
+
+    Some feeds (e.g. Hugging Face, Google DeepMind) carry only a title; an event
+    made only of such articles cannot be summarized and must not take one of
+    the `MAX_EDITION_EVENTS` slots.
+    """
+    assert event.id is not None
+    return any(_has_text(article) for article in article_repository.list_by_event(event.id))
 
 
 def _select_events(events: list[Event]) -> list[Event]:
@@ -403,11 +427,14 @@ def _prepare_event(
     *,
     language: str,
 ) -> EventForEdition | None:
-    """Assemble one event's `EventForEdition`, or `None` if it has no articles."""
+    """Assemble one event's `EventForEdition`, or `None` if it has no article with text.
+
+    Articles without text are left out of the LLM context and the citations.
+    """
     assert event.id is not None
-    articles = article_repository.list_by_event(event.id)
+    articles = [a for a in article_repository.list_by_event(event.id) if _has_text(a)]
     if not articles:
-        logger.warning("Event %d has no article: excluded from the edition", event.id)
+        logger.warning("Event %d has no article with text: excluded from the edition", event.id)
         return None
 
     sources = _sources_for(articles, source_repository)

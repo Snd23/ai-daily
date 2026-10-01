@@ -485,6 +485,80 @@ def test_only_the_selected_events_reach_the_llm(
     assert len(provider.requests) == 2  # summarize + developer impact, for one event only
 
 
+# --- events whose articles have no text (TASK-036) ---------------------------
+
+
+def test_an_event_with_no_article_text_is_excluded_not_failed(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Hugging Face posts a title-only entry",
+        url="https://openai.com/news/title-only",
+        content_hash="hash-title-only",
+        raw_excerpt="",
+        normalized_text="",
+    )
+    provider = _FakeLLMProvider()
+
+    result = _generate(connection, output_dir, provider=provider)
+
+    assert _count(connection, "event") == 2
+    assert result.events_in_edition == 1
+    assert result.failed_events == []
+    assert len(provider.requests) == 2  # one event only: summarize + developer impact
+
+
+def test_a_text_less_event_does_not_use_up_a_selection_slot(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 1)
+    source = _add_source(connection)
+    _add_article(connection, source, raw_excerpt="", normalized_text="")
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    result = _generate(connection, output_dir)
+
+    assert result.events_in_edition == 1
+    assert result.failed_events == []
+
+
+def test_an_article_without_text_is_left_out_of_a_mixed_event(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    openai = _add_source(connection)
+    reuters = _add_source(connection, name="Reuters", url="https://reuters.com/feed", tier=2)
+    _add_article(connection, openai, raw_excerpt="", normalized_text="")
+    _add_article(
+        connection,
+        reuters,
+        url="https://reuters.com/openai-model-x",
+        content_hash="hash-model-x-reuters",
+        raw_excerpt="<p>Reuters reports Model X.</p>",
+        normalized_text="Reuters reports Model X.",
+    )
+
+    result = _generate(connection, output_dir)
+
+    assert _count(connection, "event") == 1
+    assert result.events_in_edition == 1
+    assert result.failed_events == []
+    reader = PdfReader(io.BytesIO(result.pdf_path.read_bytes()))
+    pdf_text = "".join(page.extract_text() for page in reader.pages)
+    pdf_text = "".join(pdf_text.split())
+    assert "https://reuters.com/openai-model-x" in pdf_text
+    assert "https://openai.com/news/model-x" not in pdf_text
+
+
 # --- per-event error handling -------------------------------------------------
 
 

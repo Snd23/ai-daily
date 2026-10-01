@@ -343,10 +343,46 @@ resulting PDF text.
 
 ## TASK-036 — Events whose articles have no excerpt
 
-**Status:** PLANNED. **Motivation:** 4 of 15 selected events were dropped in the
-TASK-035 run because an article had no text at all. **Open decisions:** drop such
-articles before clustering, keep the event using only the other articles'
-excerpts, or summarize from the title alone (risky for CLAUDE.md §17).
+**Status:** COMPLETED (2026-10-01).
+
+**Motivation:** 4 of the 15 selected events were dropped in the TASK-035 run.
+Real data: all 4 are single-article events from Hugging Face (3 of 3 articles)
+and Google DeepMind (1 of 2), whose feeds carry only a title. `ArticleContext`
+requires a non-blank excerpt, so the event failed before any LLM call, after
+winning a selection slot (high importance, Tier 1 sources).
+
+**Decision (user, 2026-10-01):** exclude such events from the selection now;
+the root cause (fetching the article text) belongs to TASK-031.
+
+**Scope** (`app/pipeline/generation.py`):
+- an event is eligible for the edition only if at least one of its articles has
+  text (`normalized_text` or `raw_excerpt`, non-blank);
+- eligibility is checked before the top-N selection, so excluded events do not
+  use one of the 15 slots; the number of excluded events is logged;
+- in an eligible event, articles without text are left out of the LLM context
+  (and therefore of the citations shown), instead of failing the whole event.
+
+**Out of scope:** title-only entries, using the title as text, fetching the page
+(TASK-031), changing `ArticleContext`.
+
+**Verification:** tests (a text-less event is neither selected nor reported as
+failed; a mixed event still produces content); `pytest`, `ruff check`,
+`mypy app`; a real `generate` is not needed, because the change needs no LLM
+call, but the exclusion is checked on the real database (events 2330, 2331,
+2351, 2353 must be excluded).
+
+---
+
+**Results:**
+- `pytest`: 988 passed (3 new). `ruff check`: OK. `mypy app`: OK.
+- Real database check (no LLM call): of today's 101 events, 97 are eligible and the
+  4 text-less ones (2330, 2331, 2351, 2353) are excluded; the 15 selected events
+  are all eligible. A new real `generate` was not run: it would only repeat the
+  TASK-035 result with 4 more events and today's quota use is unknown.
+- Effect: events from title-only feeds (Hugging Face, DeepMind) are absent from
+  the edition until TASK-031 fetches their text.
+
+---
 
 ## TASK-037 — Fail fast on daily-quota errors
 
