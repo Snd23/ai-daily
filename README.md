@@ -34,7 +34,7 @@ cp .env.example .env
 
 See `.env.example` for the currently defined variables (LLM provider selection and API keys, database location, default edition language, the collection freshness window, Telegram credentials for a later phase). `.env` must never be committed.
 
-`LLM_PROVIDER` selects `anthropic`, `openai` or `gemini`, with the matching `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` set. Gemini (Google AI Studio) has a free tier that needs no billing, unlike Anthropic and OpenAI.
+`LLM_PROVIDER` selects `anthropic`, `openai` or `gemini`, with the matching `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` set. Gemini (Google AI Studio) has a free tier that needs no billing, unlike Anthropic and OpenAI. `LLM_MIN_INTERVAL_SECONDS` (default `0`) sets a minimum pause between LLM calls; use `13` on the Gemini free tier (5 requests per minute). Transient 429/503 errors from Gemini are retried automatically (up to 3 times).
 
 ## Development commands
 

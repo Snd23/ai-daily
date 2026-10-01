@@ -202,3 +202,59 @@ def test_complete_error_does_not_leak_raw_sdk_exception_type() -> None:
         pass
     except errors.APIError:
         pytest.fail("raw google.genai.errors.APIError leaked instead of LLMProviderError")
+
+
+# --- retry metadata (TASK-033) ------------------------------------------------
+
+
+def _complete_expecting_error(error: errors.APIError) -> LLMProviderError:
+    provider = GeminiProvider(client=_FakeGeminiClient(error=error))  # type: ignore[arg-type]
+    request = CompletionRequest(messages=[Message(role="user", content="hi")])
+    with pytest.raises(LLMProviderError) as exc_info:
+        provider.complete(request)
+    return exc_info.value
+
+
+@pytest.mark.parametrize("status_code", [429, 503])
+def test_transient_status_codes_are_marked_retryable(status_code: int) -> None:
+    error = _complete_expecting_error(errors.APIError(status_code, {"error": {"message": "x"}}))
+
+    assert error.retryable is True
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 500])
+def test_other_status_codes_are_not_retryable(status_code: int) -> None:
+    error = _complete_expecting_error(errors.APIError(status_code, {"error": {"message": "x"}}))
+
+    assert error.retryable is False
+    assert error.retry_after_seconds is None
+
+
+def test_retry_delay_hint_is_read_from_error_details() -> None:
+    payload = {
+        "error": {
+            "message": "quota",
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.Help"},
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "45s"},
+            ],
+        }
+    }
+
+    error = _complete_expecting_error(errors.APIError(429, payload))
+
+    assert error.retry_after_seconds == 45.0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": {"message": "x"}},
+        {"error": {"details": "not a list"}},
+        {"error": {"details": [{"retryDelay": "soon"}]}},
+    ],
+)
+def test_missing_or_malformed_retry_delay_hint_is_ignored(payload: dict[str, Any]) -> None:
+    error = _complete_expecting_error(errors.APIError(429, payload))
+
+    assert error.retry_after_seconds is None

@@ -19,6 +19,7 @@ from app.llm.factory import create_llm_provider
 from app.llm.gemini_provider import DEFAULT_GEMINI_MODEL, GeminiProvider
 from app.llm.openai_provider import DEFAULT_OPENAI_MODEL, OpenAIProvider
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Message, Usage
+from app.llm.retrying_provider import RetryingProvider
 
 __all__ = [
     "DEFAULT_ANTHROPIC_MODEL",
@@ -33,6 +34,7 @@ __all__ = [
     "LLMProviderError",
     "Message",
     "OpenAIProvider",
+    "RetryingProvider",
     "Usage",
     "create_llm_provider",
 ]

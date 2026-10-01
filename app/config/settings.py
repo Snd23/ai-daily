@@ -64,6 +64,7 @@ class Settings(BaseModel):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     news_lookback_days: int = DEFAULT_NEWS_LOOKBACK_DAYS
+    llm_min_interval_seconds: float = 0.0
 
     @field_validator("default_language")
     @classmethod
@@ -79,6 +80,13 @@ class Settings(BaseModel):
     def _validate_news_lookback_days(cls, value: int) -> int:
         if value < 0:
             raise ValueError(f"NEWS_LOOKBACK_DAYS must be >= 0, got {value!r}")
+        return value
+
+    @field_validator("llm_min_interval_seconds")
+    @classmethod
+    def _validate_llm_min_interval_seconds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError(f"LLM_MIN_INTERVAL_SECONDS must be >= 0, got {value!r}")
         return value
 
 
@@ -134,6 +142,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
                 "news_lookback_days": _read_env(
                     "NEWS_LOOKBACK_DAYS", str(DEFAULT_NEWS_LOOKBACK_DAYS)
                 ),
+                "llm_min_interval_seconds": _read_env("LLM_MIN_INTERVAL_SECONDS", "0"),
             }
         )
     except ValidationError as exc:

@@ -42,7 +42,7 @@ from app.config import (
 from app.config.settings import SUPPORTED_LANGUAGES
 from app.database import ArticleRepository, SourceRepository, get_connection, run_migrations
 from app.deduplication import deduplicate_pending_articles
-from app.llm import create_llm_provider
+from app.llm import RetryingProvider, create_llm_provider
 from app.logging_config import configure_logging
 from app.normalization import normalize_pending_articles
 from app.pipeline import generate_edition
@@ -211,7 +211,10 @@ def generate(
         run_migrations(connection)
         result = generate_edition(
             connection,
-            create_llm_provider(settings),
+            RetryingProvider(
+                create_llm_provider(settings),
+                min_interval_seconds=settings.llm_min_interval_seconds,
+            ),
             language=edition_language,
             output_dir=_editions_dir(settings),
             lookback_days=settings.news_lookback_days,

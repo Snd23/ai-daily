@@ -46,6 +46,9 @@ DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
 _ROLE_MAP: dict[str, str] = {"user": "user", "assistant": "model"}
 
+# HTTP statuses worth retrying (TASK-033): rate limit and temporary overload.
+_RETRYABLE_STATUS_CODES = frozenset({429, 503})
+
 
 class GeminiProvider(LLMProvider):
     """`LLMProvider` implementation wrapping `google.genai.Client`."""
@@ -79,7 +82,11 @@ class GeminiProvider(LLMProvider):
                 config=config,
             )
         except APIError as exc:
-            raise LLMProviderError(f"Gemini completion failed: {exc}") from exc
+            raise LLMProviderError(
+                f"Gemini completion failed: {exc}",
+                retryable=exc.code in _RETRYABLE_STATUS_CODES,
+                retry_after_seconds=_retry_delay_seconds(exc),
+            ) from exc
 
         text = response.text or ""
         usage = None
@@ -89,6 +96,25 @@ class GeminiProvider(LLMProvider):
                 output_tokens=response.usage_metadata.candidates_token_count or 0,
             )
         return CompletionResponse(text=text, usage=usage)
+
+
+def _retry_delay_seconds(exc: APIError) -> float | None:
+    """Read the `RetryInfo.retryDelay` hint (e.g. `"45s"`) Gemini attaches to a 429."""
+    payload = exc.details
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, list):
+        return None
+    for item in details:
+        delay = item.get("retryDelay") if isinstance(item, dict) else None
+        if isinstance(delay, str) and delay.endswith("s"):
+            try:
+                return float(delay[:-1])
+            except ValueError:
+                return None
+    return None
 
 
 def _split_system_message(messages: list[Message]) -> tuple[str | None, list[Message]]:

@@ -167,3 +167,25 @@ def test_supported_languages_are_it_and_en() -> None:
 def test_app_timezone_is_europe_rome() -> None:
     assert APP_TIMEZONE_NAME == "Europe/Rome"
     assert str(APP_TIMEZONE) == "Europe/Rome"
+
+
+def test_llm_min_interval_seconds_defaults_to_zero() -> None:
+    assert load_settings(env_file=_NO_ENV_FILE).llm_min_interval_seconds == 0.0
+
+
+def test_llm_min_interval_seconds_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_MIN_INTERVAL_SECONDS", "13")
+
+    assert load_settings(env_file=_NO_ENV_FILE).llm_min_interval_seconds == 13.0
+
+
+@pytest.mark.parametrize("value", ["-1", "abc"])
+def test_invalid_llm_min_interval_seconds_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("LLM_MIN_INTERVAL_SECONDS", value)
+
+    with pytest.raises(ConfigurationError):
+        load_settings(env_file=_NO_ENV_FILE)
