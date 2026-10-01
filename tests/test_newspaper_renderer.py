@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 from pypdf import PdfReader
+from reportlab.platypus import Paragraph
 from reportlab.platypus.doctemplate import LayoutError
 
 from app.ai.concept_explainer import ConceptExplanation
@@ -29,6 +30,7 @@ from app.config.labels import load_labels
 from app.editorial.edition import Edition, EventForEdition, assemble_edition
 from app.editorial.event_editorial import EditorialContent
 from app.newspaper import NewspaperMetadata, NewspaperRenderError, render_edition
+from app.newspaper import renderer as renderer_module
 
 _LABELS = load_labels()
 
@@ -617,6 +619,20 @@ def test_render_edition_places_citations_after_summary_and_subblocks() -> None:
     concept_explanation_pos = text.index("A very unique concept explanation sentence.")
     citation_pos = text.index("A Very Unique Trailing Citation Publisher")
     assert summary_pos < developer_impact_pos < concept_explanation_pos < citation_pos
+
+
+def test_a_multi_paragraph_summary_is_rendered_as_separate_paragraphs() -> None:
+    content = _content(summary="First paragraph.\n\nSecond paragraph.\nThird paragraph.")
+
+    block = renderer_module._build_story_block(content)
+
+    paragraphs = [f for f in block._content if isinstance(f, Paragraph)]  # type: ignore[attr-defined]
+    body = [p.getPlainText() for p in paragraphs if p.style.name == "BodyText"]
+    assert body == [
+        "First paragraph.",
+        "Second paragraph.",
+        "Third paragraph.",
+    ]
 
 
 def test_render_edition_never_renders_verification_status_text() -> None:

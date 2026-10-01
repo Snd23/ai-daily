@@ -501,3 +501,18 @@ def test_module_imports_no_database_access_settings_or_provider_factory() -> Non
         ("app.llm.provider", "Message"),
         ("app.llm.provider", "Usage"),
     }
+
+
+def test_system_message_asks_for_a_complete_summary_with_a_length_target() -> None:
+    system, _ = _prompt(_input())
+
+    assert "The summary must be complete" in system
+    assert "Aim for 120 to 180 words" in system
+    assert "concise" not in system
+
+
+def test_a_top_story_gets_a_longer_length_target() -> None:
+    system, _ = _prompt(_input(is_top_story=True))
+
+    assert "Aim for 250 to 350 words" in system
+
