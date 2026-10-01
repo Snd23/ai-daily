@@ -82,6 +82,14 @@ logger = logging.getLogger(__name__)
 # lists three stories.
 MAX_TOP_STORIES = 3
 
+# Maximum number of events per edition that reach the LLM stages (TASK-032,
+# CLAUDE.md §35: filter and rank locally before spending LLM calls; two calls
+# per event). The rest of the day's events stay persisted without content.
+MAX_EDITION_EVENTS = 15
+
+# Tie-break between events of equal importance: better-verified first.
+_VERIFICATION_ORDER = {"VERIFIED": 0, "PARTIALLY_VERIFIED": 1, "DEVELOPING": 2, "UNVERIFIED": 3}
+
 # Errors that affect one event only. Every one of them is raised by an
 # already-implemented stage on a per-event basis, so the run logs it,
 # leaves that event out of the edition and continues with the others
@@ -94,6 +102,18 @@ _EVENT_ERRORS = (
     DeveloperImpactParseError,
     ValueError,
 )
+
+
+class EmptyEditionError(Exception):
+    """Raised when an edition would contain no event (TASK-034).
+
+    `failed_events` lists the `(event_id, error)` pairs of the events whose
+    generation failed; it is empty when there was simply nothing to publish.
+    """
+
+    def __init__(self, message: str, failed_events: list[tuple[int, str]]) -> None:
+        super().__init__(message)
+        self.failed_events = failed_events
 
 
 @dataclass
@@ -142,6 +162,9 @@ def generate_edition(
         A `GenerationResult` describing what was created.
 
     Raises:
+        EmptyEditionError: if the edition would contain no event, either
+            because there was none or because every one failed. No PDF is
+            written and the edition row is marked `failed` (TASK-034).
         sqlite3.Error, OSError: genuine infrastructure failures, which are
             never caught here.
         ValueError: if an already-persisted edition's row is inconsistent
@@ -173,9 +196,21 @@ def generate_edition(
         edition_day=edition_day,
     )
 
-    edition = assemble_edition(language, events_for_edition, MAX_TOP_STORIES)
     record = _edition_record(edition_repository, edition_day, language)
     assert record.id is not None  # set by EditionRepository.create/_from_row
+
+    if not events_for_edition:
+        # A rerun must not downgrade an edition that was already published.
+        if record.status != "published":
+            edition_repository.update_status(record.id, "failed")
+        raise EmptyEditionError(
+            f"all {len(failed_events)} event(s) failed to generate"
+            if failed_events
+            else "no event available for this edition",
+            failed_events,
+        )
+
+    edition = assemble_edition(language, events_for_edition, MAX_TOP_STORIES)
 
     pdf = render_edition(
         edition,
@@ -345,7 +380,15 @@ def _compose_editorial_events(
     events_for_edition: list[EventForEdition] = []
     failed: list[tuple[int, str]] = []
 
-    for event in event_repository.list_by_created_date(edition_day.isoformat()):
+    todays_events = event_repository.list_by_created_date(edition_day.isoformat())
+    eligible = [event for event in todays_events if _has_article_text(event, article_repository)]
+    if len(eligible) < len(todays_events):
+        logger.info(
+            "%d event(s) excluded: none of their articles has any text",
+            len(todays_events) - len(eligible),
+        )
+
+    for event in _select_events(eligible):
         assert event.id is not None  # every persisted Event has an id
         try:
             prepared = _prepare_event(
@@ -367,6 +410,41 @@ def _compose_editorial_events(
     return events_for_edition, failed
 
 
+def _has_text(article: Article) -> bool:
+    """True if the article has a non-blank excerpt to ground a summary on."""
+    return bool((article.normalized_text or article.raw_excerpt or "").strip())
+
+
+def _has_article_text(event: Event, article_repository: ArticleRepository) -> bool:
+    """True if at least one of the event's articles has text (TASK-036).
+
+    Some feeds (e.g. Hugging Face, Google DeepMind) carry only a title; an event
+    made only of such articles cannot be summarized and must not take one of
+    the `MAX_EDITION_EVENTS` slots.
+    """
+    assert event.id is not None
+    return any(_has_text(article) for article in article_repository.list_by_event(event.id))
+
+
+def _select_events(events: list[Event]) -> list[Event]:
+    """Keep the `MAX_EDITION_EVENTS` best events: importance first, then verification.
+
+    Deterministic (ties end on `id`), so a re-run or another language of the
+    same day selects the same events and reuses their stored content.
+    """
+    ranked = sorted(
+        events,
+        key=lambda event: (
+            -event.importance_score,
+            _VERIFICATION_ORDER[event.verification_status],
+            event.id if event.id is not None else 0,
+        ),
+    )
+    selected = ranked[:MAX_EDITION_EVENTS]
+    logger.info("Selected %d of %d event(s) for the edition", len(selected), len(events))
+    return selected
+
+
 def _prepare_event(
     llm_provider: LLMProvider,
     event: Event,
@@ -376,11 +454,14 @@ def _prepare_event(
     *,
     language: str,
 ) -> EventForEdition | None:
-    """Assemble one event's `EventForEdition`, or `None` if it has no articles."""
+    """Assemble one event's `EventForEdition`, or `None` if it has no article with text.
+
+    Articles without text are left out of the LLM context and the citations.
+    """
     assert event.id is not None
-    articles = article_repository.list_by_event(event.id)
+    articles = [a for a in article_repository.list_by_event(event.id) if _has_text(a)]
     if not articles:
-        logger.warning("Event %d has no article: excluded from the edition", event.id)
+        logger.warning("Event %d has no article with text: excluded from the edition", event.id)
         return None
 
     sources = _sources_for(articles, source_repository)

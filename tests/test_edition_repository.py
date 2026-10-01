@@ -102,6 +102,25 @@ def test_update_pdf_path_rejects_an_unknown_edition(connection: sqlite3.Connecti
         EditionRepository(connection).update_pdf_path(999, "somewhere.pdf", "published")
 
 
+def test_update_status_changes_only_the_status(connection: sqlite3.Connection) -> None:
+    repository = EditionRepository(connection)
+    created = repository.create(_make_record())
+    assert created.id is not None
+    repository.update_pdf_path(created.id, "data/editions/2026-09-16-it.pdf", "published")
+
+    repository.update_status(created.id, "failed")
+
+    stored = repository.get_by_date_and_language("2026-09-16", "it")
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.pdf_path == "data/editions/2026-09-16-it.pdf"
+
+
+def test_update_status_rejects_an_unknown_edition(connection: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="No edition found with id=999"):
+        EditionRepository(connection).update_status(999, "failed")
+
+
 def test_a_duplicate_edition_number_is_rejected_by_the_schema(
     connection: sqlite3.Connection,
 ) -> None:

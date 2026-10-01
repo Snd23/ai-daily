@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, ValidationError, field_validator
 
 from app.config.errors import ConfigurationError
@@ -42,7 +42,7 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = ("it", "en")
 APP_TIMEZONE_NAME = "Europe/Rome"
 APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
 
-LLMProviderName = Literal["anthropic", "openai"]
+LLMProviderName = Literal["anthropic", "openai", "gemini"]
 
 # Approved TASK-028 default: an article/event is still fresh if its most
 # recent `published_at` is no more than this many days before the reference
@@ -58,11 +58,13 @@ class Settings(BaseModel):
     llm_provider: LLMProviderName = "anthropic"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    gemini_api_key: str | None = None
     database_url: str = "sqlite:///data/ai_daily.db"
     default_language: str = "it"
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     news_lookback_days: int = DEFAULT_NEWS_LOOKBACK_DAYS
+    llm_min_interval_seconds: float = 0.0
 
     @field_validator("default_language")
     @classmethod
@@ -78,6 +80,13 @@ class Settings(BaseModel):
     def _validate_news_lookback_days(cls, value: int) -> int:
         if value < 0:
             raise ValueError(f"NEWS_LOOKBACK_DAYS must be >= 0, got {value!r}")
+        return value
+
+    @field_validator("llm_min_interval_seconds")
+    @classmethod
+    def _validate_llm_min_interval_seconds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError(f"LLM_MIN_INTERVAL_SECONDS must be >= 0, got {value!r}")
         return value
 
 
@@ -104,17 +113,27 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     precedence over values from the `.env` file, so real deployment
     environments are never overridden by a stray local `.env`.
 
+    When `env_file` is not given, the `.env` file is looked up relative to
+    the current working directory (`find_dotenv(usecwd=True)`) rather than
+    to this module's own file location. `load_dotenv`'s own default
+    (`find_dotenv()` with `usecwd=False`) walks up from
+    `app/config/settings.py`'s directory instead, which can silently load
+    this repository's own `.env` (real secrets included) even when the
+    caller has `chdir`-ed elsewhere, e.g. into an isolated test workspace.
+
     Raises:
         ConfigurationError: if a value is present but invalid (e.g. an
             unsupported `DEFAULT_LANGUAGE` or `LLM_PROVIDER`).
     """
-    load_dotenv(dotenv_path=env_file, override=False)
+    resolved_path = env_file if env_file is not None else find_dotenv(usecwd=True)
+    load_dotenv(dotenv_path=resolved_path, override=False)
 
     try:
         return Settings.model_validate(
             {
                 "llm_provider": _read_env("LLM_PROVIDER", "anthropic"),
                 "anthropic_api_key": _read_optional_env("ANTHROPIC_API_KEY"),
+                "gemini_api_key": _read_optional_env("GEMINI_API_KEY"),
                 "openai_api_key": _read_optional_env("OPENAI_API_KEY"),
                 "database_url": _read_env("DATABASE_URL", "sqlite:///data/ai_daily.db"),
                 "default_language": _read_env("DEFAULT_LANGUAGE", "it"),
@@ -123,6 +142,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
                 "news_lookback_days": _read_env(
                     "NEWS_LOOKBACK_DAYS", str(DEFAULT_NEWS_LOOKBACK_DAYS)
                 ),
+                "llm_min_interval_seconds": _read_env("LLM_MIN_INTERVAL_SECONDS", "0"),
             }
         )
     except ValidationError as exc:

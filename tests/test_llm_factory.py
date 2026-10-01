@@ -1,8 +1,8 @@
-"""Tests for `app.llm.factory` (TASK-014).
+"""Tests for `app.llm.factory` (TASK-014, extended with a `gemini` option).
 
 Only construction is exercised here (no `complete()` call, no network):
-constructing a real `anthropic.Anthropic`/`openai.OpenAI` client does not
-itself perform any HTTP request.
+constructing a real `anthropic.Anthropic`/`openai.OpenAI`/`genai.Client`
+client does not itself perform any HTTP request.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from app.config.errors import ConfigurationError
 from app.config.settings import Settings
 from app.llm.anthropic_provider import AnthropicProvider
 from app.llm.factory import create_llm_provider
+from app.llm.gemini_provider import GeminiProvider
 from app.llm.openai_provider import OpenAIProvider
 
 
@@ -41,6 +42,21 @@ def test_creates_openai_provider_when_selected_with_key() -> None:
 
 def test_raises_configuration_error_when_openai_key_missing() -> None:
     settings = Settings(llm_provider="openai", openai_api_key=None)
+
+    with pytest.raises(ConfigurationError):
+        create_llm_provider(settings)
+
+
+def test_creates_gemini_provider_when_selected_with_key() -> None:
+    settings = Settings(llm_provider="gemini", gemini_api_key="test-key")
+
+    provider = create_llm_provider(settings)
+
+    assert isinstance(provider, GeminiProvider)
+
+
+def test_raises_configuration_error_when_gemini_key_missing() -> None:
+    settings = Settings(llm_provider="gemini", gemini_api_key=None)
 
     with pytest.raises(ConfigurationError):
         create_llm_provider(settings)

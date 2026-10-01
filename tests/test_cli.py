@@ -386,6 +386,18 @@ def test_generate_accepts_an_explicit_language(
     assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
 
 
+def test_generate_with_no_event_fails_without_writing_a_pdf(
+    workspace: Path, fake_llm_provider: None
+) -> None:
+    result = runner.invoke(app, ["generate"])
+
+    assert result.exit_code == 1
+    assert "generate failed" in result.output
+    assert "no event available" in result.output
+    assert "Traceback" not in result.output
+    assert not list((workspace.parent / "editions").glob("*.pdf"))
+
+
 def test_generate_rejects_an_unsupported_language(
     workspace: Path, fake_llm_provider: None
 ) -> None:

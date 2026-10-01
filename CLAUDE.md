@@ -722,6 +722,7 @@ README.md
 TODO.md
 docs/PRD.md
 docs/ARCHITECTURE.md
+docs/TASK_LOG.md
 ```
 
 ## CLAUDE.md
@@ -778,6 +779,10 @@ Contains:
 * the data model;
 * approved architectural decisions;
 * the actual implementation status of each pipeline stage, alongside historical/superseded proposals clearly marked as such.
+
+## docs/TASK_LOG.md
+
+Narrative record of every task: why it exists, what was decided and done, how it was verified, and what was flagged. `TODO.md` stays the status list; this file holds the explanations. See §44 for the entry format.
 
 See "Documentation Synchronization" for when each of these documents must be updated.
 
@@ -1295,3 +1300,52 @@ it must be treated as part of task completion.
     the implementation scope of the current task. If a documentation
     update reveals a missing architectural decision or an unowned task,
     stop and report it rather than inventing a solution.
+
+---
+
+# 44. Working Method (Anthropic best practices)
+
+These rules apply to how Claude Code works on this repository. They complement §2, §3, §29 and §39.
+
+## Context
+
+* One task per session. Between unrelated tasks the user runs `/clear`; `docs/TASK_LOG.md` is the memory that lets the next session restart from zero.
+* After two failed corrections on the same issue, stop, summarize what was learned and propose restarting with a more precise task description instead of piling on corrections.
+* Scope investigations narrowly. For research that reads many files, use a read-only subagent (e.g. `Explore`) that returns a summary; do not read dozens of files into the main context.
+
+## Task definition and TASK_LOG
+
+Every task gets an entry in `docs/TASK_LOG.md` (and a line in `TODO.md`) **before** implementation. The entry must be self-contained and state:
+
+* Motivation: why the task exists;
+* Scope: the files and interfaces involved;
+* Out of scope: what is explicitly not done;
+* Verification: the exact commands and, where relevant, the real end-to-end check that proves it works.
+
+When the task ends, the same entry is updated with Changes, Verification results and Follow-ups/flagged items. Updating it is part of task completion.
+
+## Explore, plan, implement
+
+* Explore and plan before coding when the change touches several files, the approach is uncertain, or the code is unfamiliar. If the diff can be described in one sentence, skip the plan.
+* For tasks with open product decisions, interview the user first (`AskUserQuestion`), record the decisions in the task entry, then implement.
+
+## Verification
+
+* A task is done only when a check Claude can run passes: tests, lint, type check, and a real end-to-end run when the task touches an external service.
+* Show evidence (commands run and their output), not assertions of success.
+* Fix root causes; never suppress an error or weaken a check to make it pass (§32).
+
+## Review
+
+* Before proposing a commit, review the diff in a fresh context (`/code-review` or a subagent) against the task entry's scope and verification criteria.
+* Act only on findings that affect correctness or the stated requirements; report the rest as optional. Do not add abstraction, defensive code or tests for cases that cannot happen (§5).
+
+## Agents
+
+* Implementation is done by the main session, one task at a time. Do not parallelize code writing across agents.
+* Subagents are for read-heavy research and independent review. Give them everything they need in the prompt (they cannot see the conversation) and ask for a short report.
+
+## LLM features inside the pipeline
+
+* Start with the simplest design (a single call, or a fixed chain of steps) and add complexity only when it measurably improves results.
+* Keep rule-based filtering before any LLM call (§20, §35), and measure token usage per run (§35) before lengthening prompts or inputs; the free-tier limits of the configured provider are a design constraint.

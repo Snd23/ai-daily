@@ -17,6 +17,7 @@ _ENV_VARS = (
     "LLM_PROVIDER",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
     "DATABASE_URL",
     "DEFAULT_LANGUAGE",
     "TELEGRAM_BOT_TOKEN",
@@ -43,6 +44,7 @@ def test_defaults_when_no_environment_variables_are_set() -> None:
     assert settings.llm_provider == "anthropic"
     assert settings.anthropic_api_key is None
     assert settings.openai_api_key is None
+    assert settings.gemini_api_key is None
     assert settings.database_url == "sqlite:///data/ai_daily.db"
     assert settings.default_language == "it"
     assert settings.telegram_bot_token is None
@@ -68,6 +70,18 @@ def test_environment_variables_override_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.telegram_bot_token == "bot-token"
     assert settings.telegram_chat_id == "12345"
     assert settings.news_lookback_days == 5
+
+
+def test_environment_variable_sets_gemini_provider_and_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "gm-test")
+
+    settings = load_settings(env_file=_NO_ENV_FILE)
+
+    assert settings.llm_provider == "gemini"
+    assert settings.gemini_api_key == "gm-test"
 
 
 def test_empty_environment_values_fall_back_to_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,3 +167,25 @@ def test_supported_languages_are_it_and_en() -> None:
 def test_app_timezone_is_europe_rome() -> None:
     assert APP_TIMEZONE_NAME == "Europe/Rome"
     assert str(APP_TIMEZONE) == "Europe/Rome"
+
+
+def test_llm_min_interval_seconds_defaults_to_zero() -> None:
+    assert load_settings(env_file=_NO_ENV_FILE).llm_min_interval_seconds == 0.0
+
+
+def test_llm_min_interval_seconds_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_MIN_INTERVAL_SECONDS", "13")
+
+    assert load_settings(env_file=_NO_ENV_FILE).llm_min_interval_seconds == 13.0
+
+
+@pytest.mark.parametrize("value", ["-1", "abc"])
+def test_invalid_llm_min_interval_seconds_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("LLM_MIN_INTERVAL_SECONDS", value)
+
+    with pytest.raises(ConfigurationError):
+        load_settings(env_file=_NO_ENV_FILE)
