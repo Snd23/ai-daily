@@ -8,6 +8,7 @@ already-tested pipeline stages:
     process   -> normalize_pending_articles + deduplicate_pending_articles
     generate  -> app.pipeline.generate_edition (TASK-024)
     run       -> collect, then process, then generate
+    web       -> app.web.create_app, served by Flask (TASK-044)
 
 This module stays a thin adapter (docs/ARCHITECTURE.md §4.13): it loads
 settings, opens one connection per invocation, builds the LLM provider and
@@ -46,6 +47,7 @@ from app.llm import RetryingProvider, create_llm_provider
 from app.logging_config import configure_logging
 from app.normalization import normalize_pending_articles
 from app.pipeline import EmptyEditionError, generate_edition
+from app.web import create_app
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +258,18 @@ def run(
     collect()
     process()
     generate(language=language)
+
+
+@app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", "--host", help="Address to listen on."),
+    port: int = typer.Option(8000, "--port", help="Port to listen on."),
+) -> None:
+    """Serve the published editions as a website (read-only)."""
+    settings = load_settings()
+    try:
+        web_app = create_app(settings.database_url, settings.default_language)
+    except _CRITICAL_ERRORS as exc:
+        typer.echo(f"web failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    web_app.run(host=host, port=port)

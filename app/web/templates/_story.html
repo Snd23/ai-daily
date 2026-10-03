@@ -1,0 +1,36 @@
+<article class="story">
+  <h3>{{ story.title }}</h3>
+  {% for line in story.summary.splitlines() if line.strip() %}
+  <p>{{ line }}</p>
+  {% endfor %}
+  {% set impact = story.developer_impact %}
+  {% if impact and impact.has_developer_impact and impact.impact_summary %}
+  <aside class="callout">
+    <p>{{ impact.impact_summary }}</p>
+    {% if impact.technical_area %}<p>{{ impact.technical_area | join(", ") }}</p>{% endif %}
+  </aside>
+  {% endif %}
+  {% set concept = story.concept_explanation %}
+  {% if concept %}
+  <aside class="callout">
+    <p>{{ concept.technical_definition }}</p>
+    <p>{{ concept.simple_explanation }}</p>
+    <p>{{ concept.example }}</p>
+    <p>{{ concept.why_it_matters }}</p>
+    <p>{{ concept.one_liner }}</p>
+  </aside>
+  {% endif %}
+  {% if story.articles %}
+  <footer class="sources">
+    <p class="sources-heading">{{ labels.sources }}</p>
+    <ul>
+      {% for article in story.articles %}
+      <li>
+        {{ article.source_name }}{% if article.published_at %} · {{ article.published_at }}{% endif %} ·
+        {% if article.url | is_link %}<a href="{{ article.url }}" rel="noopener noreferrer nofollow">{{ article.url }}</a>{% else %}{{ article.url }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </footer>
+  {% endif %}
+</article>

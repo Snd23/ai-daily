@@ -72,4 +72,4 @@
 ## Milestone 10 — Website (details in `docs/TASK_LOG.md`)
 
 - [x] TASK-043 — Persist the composed edition
-- [ ] TASK-044 — Web app showing the editions
+- [x] TASK-044 — Web app showing the editions
