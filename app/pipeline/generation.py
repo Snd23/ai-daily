@@ -408,7 +408,16 @@ def _compose_editorial_events(
     failed: list[tuple[int, str]] = []
 
     todays_events = event_repository.list_by_created_date(edition_day.isoformat())
-    eligible = [event for event in todays_events if _has_article_text(event, article_repository)]
+    articles_by_event = {
+        event.id: article_repository.list_by_event(event.id)
+        for event in todays_events
+        if event.id is not None
+    }
+    eligible = [
+        event
+        for event in todays_events
+        if any(_has_text(article) for article in articles_by_event.get(event.id or 0, []))
+    ]
     if len(eligible) < len(todays_events):
         logger.info(
             "%d event(s) excluded: none of their articles has any text",
@@ -416,8 +425,9 @@ def _compose_editorial_events(
         )
 
     # `_select_events` returns the events best-first, so the first
-    # `MAX_TOP_STORIES` are the edition's Top Stories (they get a longer summary).
-    for rank, event in enumerate(_select_events(eligible)):
+    # `MAX_TOP_STORIES` are the edition's Top Stories (they get a longer summary);
+    # `rank` is passed on so `assemble_edition` breaks ties the same way (TASK-040).
+    for rank, event in enumerate(_select_events(eligible, articles_by_event)):
         assert event.id is not None  # every persisted Event has an id
         try:
             prepared = _prepare_event(
@@ -428,6 +438,7 @@ def _compose_editorial_events(
                 content_repository,
                 language=language,
                 is_top_story=rank < MAX_TOP_STORIES,
+                selection_rank=rank,
             )
         except _EVENT_ERRORS as exc:
             logger.warning("Event %d skipped: %s", event.id, exc)
@@ -445,34 +456,55 @@ def _has_text(article: Article) -> bool:
     return bool((article.normalized_text or article.raw_excerpt or "").strip())
 
 
-def _has_article_text(event: Event, article_repository: ArticleRepository) -> bool:
-    """True if at least one of the event's articles has text (TASK-036).
+def _select_events(
+    events: list[Event], articles_by_event: dict[int, list[Article]]
+) -> list[Event]:
+    """Keep the `MAX_EDITION_EVENTS` best events, best first.
 
-    Some feeds (e.g. Hugging Face, Google DeepMind) carry only a title; an event
-    made only of such articles cannot be summarized and must not take one of
-    the `MAX_EDITION_EVENTS` slots.
+    Importance first; among equal scores (TASK-040): more distinct sources,
+    then better verification, then the most recent article, then `id`.
+    Deterministic, so a re-run or another language of the same day selects the
+    same events and reuses their stored content.
+
+    Events whose articles have no text were already removed by the caller
+    (TASK-036): some feeds (e.g. Hugging Face, Google DeepMind) carry only a
+    title, and such an event cannot be summarized.
     """
-    assert event.id is not None
-    return any(_has_text(article) for article in article_repository.list_by_event(event.id))
 
-
-def _select_events(events: list[Event]) -> list[Event]:
-    """Keep the `MAX_EDITION_EVENTS` best events: importance first, then verification.
-
-    Deterministic (ties end on `id`), so a re-run or another language of the
-    same day selects the same events and reuses their stored content.
-    """
-    ranked = sorted(
-        events,
-        key=lambda event: (
+    def sort_key(event: Event) -> tuple[float, int, int, float, int]:
+        assert event.id is not None  # every persisted Event has an id
+        # Only articles with text: the others are not cited in the edition.
+        articles = [a for a in articles_by_event.get(event.id, []) if _has_text(a)]
+        return (
             -event.importance_score,
+            -len({article.source_id for article in articles}),
             _VERIFICATION_ORDER[event.verification_status],
-            event.id if event.id is not None else 0,
-        ),
-    )
-    selected = ranked[:MAX_EDITION_EVENTS]
+            -_latest_published_timestamp(articles),
+            event.id,
+        )
+
+    selected = sorted(events, key=sort_key)[:MAX_EDITION_EVENTS]
     logger.info("Selected %d of %d event(s) for the edition", len(selected), len(events))
     return selected
+
+
+def _latest_published_timestamp(articles: list[Article]) -> float:
+    """POSIX timestamp of the most recent dated article, or 0.0 if none has a usable date.
+
+    A missing or naive date is never treated as recent, as in the novelty factor
+    (`app.pipeline.ranking_factors`).
+    """
+    timestamps = [0.0]
+    for article in articles:
+        if article.published_at is None:
+            continue
+        try:
+            published = datetime.fromisoformat(article.published_at)
+        except ValueError:
+            continue
+        if published.tzinfo is not None:
+            timestamps.append(published.timestamp())
+    return max(timestamps)
 
 
 def _prepare_event(
@@ -484,6 +516,7 @@ def _prepare_event(
     *,
     language: str,
     is_top_story: bool,
+    selection_rank: int,
 ) -> EventForEdition | None:
     """Assemble one event's `EventForEdition`, or `None` if it has no article with text.
 
@@ -553,6 +586,7 @@ def _prepare_event(
         content=content,
         category=assign_category(sources.values()),
         importance_score=event.importance_score,
+        selection_rank=selection_rank,
         future_date=event.future_date,
     )
 

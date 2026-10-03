@@ -65,7 +65,7 @@
 - [x] TASK-037 — Fail fast on daily-quota errors
 - [x] TASK-038 — Cross-source event clustering
 - [ ] TASK-039 — AI relevance filter
-- [ ] TASK-040 — Ranking: break ties between equal importance scores
+- [x] TASK-040 — Ranking: break ties between equal importance scores
 - [ ] TASK-041 — Do not repeat Top Stories in the sections
 - [ ] TASK-042 — Human-readable source dates in citations
 

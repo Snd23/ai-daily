@@ -315,6 +315,8 @@ The score must be computed deterministically and reproducibly: given the same in
 
 Importance and verification are separate concerns. The importance_score must reflect how significant an event is, independently of how well it has been verified; verification_status must not be used to artificially inflate or penalize the importance_score.
 
+When several events have the same importance_score, the one reported by more distinct sources comes first, then the better verified one, then the most recent one; this only orders equal scores and never changes the score itself.
+
 Top Stories must be selected primarily based on the importance_score, but an event with verification_status = UNVERIFIED must never appear in the Top Stories (see §4), regardless of its importance_score. Exclusion from the Top Stories selection — not penalization of the score — is how unverified events are handled.
 
 ⸻
