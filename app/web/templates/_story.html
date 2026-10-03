@@ -1,36 +1,35 @@
-<article class="story">
-  <h3>{{ story.title }}</h3>
-  {% for line in story.summary.splitlines() if line.strip() %}
-  <p>{{ line }}</p>
-  {% endfor %}
+{% set paragraphs = story.summary.splitlines() | select("ne", "") | list %}
+{% set words = story.summary.split() | length %}
+<article class="story {{ variant | default('') }}">
+  <p class="kicker">
+    {% if kicker %}<span class="kicker-label">{{ kicker }}</span>{% endif %}
+    <span>{{ story.articles | length }} {{ ui.source if story.articles | length == 1 else ui.sources }}</span>
+    <span>{{ [1, (words / 220) | round | int] | max }} {{ ui.minutes }}</span>
+  </p>
+  <h3 class="story-title">{{ story.title }}</h3>
+  <div class="story-body">
+    {% for line in paragraphs if line.strip() %}<p>{{ line }}</p>{% endfor %}
+  </div>
   {% set impact = story.developer_impact %}
   {% if impact and impact.has_developer_impact and impact.impact_summary %}
-  <aside class="callout">
+  <aside class="note note-dev">
+    <p class="note-label">Developer Impact</p>
     <p>{{ impact.impact_summary }}</p>
-    {% if impact.technical_area %}<p>{{ impact.technical_area | join(", ") }}</p>{% endif %}
+    {% if impact.technical_area %}
+    <ul class="tags">{% for area in impact.technical_area %}<li>{{ area }}</li>{% endfor %}</ul>
+    {% endif %}
   </aside>
   {% endif %}
   {% set concept = story.concept_explanation %}
   {% if concept %}
-  <aside class="callout">
+  <aside class="note note-concept">
+    <p class="note-label">AI Senza Sbatti</p>
     <p>{{ concept.technical_definition }}</p>
     <p>{{ concept.simple_explanation }}</p>
     <p>{{ concept.example }}</p>
     <p>{{ concept.why_it_matters }}</p>
-    <p>{{ concept.one_liner }}</p>
+    <p class="note-oneliner">{{ concept.one_liner }}</p>
   </aside>
   {% endif %}
-  {% if story.articles %}
-  <footer class="sources">
-    <p class="sources-heading">{{ labels.sources }}</p>
-    <ul>
-      {% for article in story.articles %}
-      <li>
-        {{ article.source_name }}{% if article.published_at %} · {{ article.published_at }}{% endif %} ·
-        {% if article.url | is_link %}<a href="{{ article.url }}" rel="noopener noreferrer nofollow">{{ article.url }}</a>{% else %}{{ article.url }}{% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-  </footer>
-  {% endif %}
+  {% include "_sources.html" %}
 </article>

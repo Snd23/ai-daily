@@ -1,0 +1,14 @@
+{% if story.articles %}
+<ul class="sources" aria-label="{{ labels.sources if labels else 'Sources' }}">
+  {% for article in story.articles %}
+  <li>
+    {% if article.url | is_link %}
+    <a href="{{ article.url }}" rel="noopener noreferrer nofollow" title="{{ article.url }}">{{ article.source_name }}<span class="arrow" aria-hidden="true">↗</span></a>
+    {% else %}
+    <span title="{{ article.url }}">{{ article.source_name }}</span>
+    {% endif %}
+    {% if article.published_at %}<time>{{ article.published_at[:10] }}</time>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}

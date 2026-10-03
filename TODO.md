@@ -73,3 +73,4 @@
 
 - [x] TASK-043 — Persist the composed edition
 - [x] TASK-044 — Web app showing the editions
+- [x] TASK-045 — Website design
