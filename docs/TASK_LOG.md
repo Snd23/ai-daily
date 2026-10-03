@@ -724,3 +724,76 @@ existing formatting of the file.
 **Verification results:** at 22:00 UTC on 2026-10-03, `uv run pytest` gave 4
 failed / 1037 passed on `develop`, and 1041 passed with this fix;
 `uv run ruff check .` OK; `uv run mypy` OK.
+
+---
+
+## TASK-039 — AI relevance filter
+
+**Status:** DONE (awaiting approval/commit; real LLM run still to do, see Flagged).
+
+**Motivation:** sources that are not dedicated to AI (NVIDIA, Microsoft Research,
+BBC, ...) also publish unrelated items, and nothing filters them: the edition of
+2026-10-01 printed a BMW Serie 3 review, a list of GeForce NOW games and an NVIDIA
+fellowship announcement. AI Daily is a newspaper about AI (PRD §1-2: relevance
+before quantity), so such events must not reach the edition.
+
+**Decisions (user, 2026-10-03):**
+- Approach: one LLM call over the titles of the day's clusters decides which are
+  not about AI (option "LLM on titles"; keyword rules were considered and not
+  adopted). Same pattern as TASK-038: titles are untrusted data, the response is
+  only a list of item numbers, validated strictly.
+- Defaults chosen by Claude, stated to the user: the filter runs in the analysis
+  phase, after the cross-source merge and before events are persisted, so it runs
+  once per article, not per language; the articles of a cluster judged not about
+  AI are marked `discarded` (with `duplicate_of` NULL) and never become an event,
+  so a later run neither re-clusters nor re-judges them; a failed call or a
+  malformed answer keeps every cluster (fail open, CLAUDE.md §34), like the merge;
+  when in doubt the model must keep the item.
+
+**Scope:** a new `app/relevance/` stage (pure, in-memory, `LLMProvider`
+abstraction); `ArticleRepository` gains a method to discard the rejected articles;
+`app/pipeline/generation.py` calls the stage between `_merge_clusters` and
+`_persist_event`; tests; `docs/ARCHITECTURE.md`, `docs/PRD.md`, `TODO.md`.
+
+**Out of scope:** keyword or source-tier heuristics, ranking and tie-breaks
+(TASK-040), re-judging events already persisted, changing verification.
+
+**Verification:** unit tests (kept/rejected split, `NONE` answer, malformed or
+out-of-range answer rejected, failing provider, untrusted titles presented as
+data); pipeline tests (rejected articles discarded and absent from the edition,
+fail-open on error); `uv run pytest`, `uv run ruff check .`, `uv run mypy`; a real
+call on the 2026-10-01 titles when a `GEMINI_API_KEY` is available.
+
+**Changes:** `app/relevance/__init__.py`, `app/relevance/ai_relevance_filter.py`
+(new: `filter_ai_relevant`, `RelevanceSplit`, `AIRelevanceParseError`);
+`app/database/article_repository.py` (`mark_not_relevant`, `list_clusterable`
+docstring); `app/database/article.py` (docstring: meaning of `discarded` without
+`duplicate_of`); `app/pipeline/generation.py` (`_filter_relevant`, called after
+`_merge_clusters`); `tests/test_ai_relevance_filter.py` (new),
+`tests/test_article_repository.py`, `tests/test_pipeline_generation.py` (the fake
+provider records the analysis-phase calls in `analysis_requests`, apart from the
+content generation calls); `docs/ARCHITECTURE.md` §2 and §4.1c, §4.14;
+`docs/PRD.md` §7; `README.md`; `TODO.md`.
+
+**Design note:** each title is put on one line (whitespace collapsed, `|` replaced),
+so a title cannot forge further numbered items or titles in the prompt. This
+matters more here than in the merge: a rejection discards the articles for good.
+
+**Verification results:**
+- `uv run pytest` 1052 passed; `uv run ruff check .` OK; `uv run mypy` OK
+  (61 source files).
+- Independent review of the diff in a fresh context: no correctness bug; its
+  findings on prompt-line forging, stale `discarded` docstrings, a multi-line
+  answer being accepted and a missing pipeline test for a provider error were
+  fixed.
+
+**Flagged:**
+- The real LLM check on the 2026-10-01 titles was not run: this session has no
+  `GEMINI_API_KEY` and no copy of the database. It should be run before relying
+  on the prompt (`uv run ai-daily generate` on a copy of the database, then read
+  the `Not about AI, discarded` log lines).
+- A rejection is permanent: a real AI story judged not about AI is discarded with
+  all its sources and is never judged again. Recoverable only by resetting the
+  articles to `pending` by hand.
+- `uv run ruff format --check .` reports 20 files that are not formatted on
+  `develop` already; the new files are formatted and the others were not touched.

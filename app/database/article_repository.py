@@ -257,6 +257,49 @@ class ArticleRepository:
         else:
             self._connection.commit()
 
+    def mark_not_relevant(self, article_ids: Sequence[int]) -> None:
+        """Discard every article in `article_ids` as not about AI (TASK-039).
+
+        Runs as a single atomic transaction, mirroring `assign_event`: every
+        row is set to `status = 'discarded'`, or none of them are.
+        `duplicate_of` stays NULL, which is what tells this discard apart
+        from a duplicate's. `'discarded'` takes these articles out of
+        `list_clusterable`, so a later run never judges them again.
+
+        Raises:
+            ValueError: if `article_ids` is empty or contains a repeated id
+                -- checked before any write. Also raised, after a rollback,
+                if any id does not exist or is no longer `'pending'`.
+            sqlite3.Error: propagated after a rollback for any underlying
+                database failure.
+        """
+        if not article_ids:
+            raise ValueError("article_ids must not be empty")
+        if len(set(article_ids)) != len(article_ids):
+            raise ValueError(f"article_ids must not contain repeated ids: {article_ids!r}")
+
+        try:
+            placeholders = ", ".join("?" for _ in article_ids)
+            cursor = self._connection.execute(
+                f"""
+                UPDATE article
+                SET status = 'discarded'
+                WHERE id IN ({placeholders}) AND status = 'pending'
+                """,
+                tuple(article_ids),
+            )
+            if cursor.rowcount != len(article_ids):
+                raise ValueError(
+                    f"Expected to discard {len(article_ids)} article(s), but only "
+                    f"{cursor.rowcount} row(s) matched "
+                    f"(an article id may not exist or may no longer be 'pending')"
+                )
+        except BaseException:
+            self._connection.rollback()
+            raise
+        else:
+            self._connection.commit()
+
     def list_pending_matches_for_established_canonicals(self) -> dict[int, list[int]]:
         """Return, per already-established canonical, the new `pending`
         articles that share its `content_hash`.
@@ -312,7 +355,8 @@ class ArticleRepository:
 
         A clusterable article has `status = 'pending'` (so it has not
         already been assigned to an `Event` by a previous run, and was not
-        discarded as a duplicate by TASK-009), a non-empty `content_hash`
+        discarded as a duplicate by TASK-009 or as not about AI by
+        TASK-039), a non-empty `content_hash`
         (so TASK-008's normalization has run on it), no `event_id` yet, and
         a `published_at` no older than `lookback_days` before
         `reference_date` (TASK-028 safety net -- a second freshness check
