@@ -2,13 +2,26 @@
 <html lang="{{ page_language }}">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}AI DAILY{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}AI Daily{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,650;1,6..72,400&family=JetBrains+Mono:wght@500;600&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <main class="page">
-    {% block content %}{% endblock %}
-  </main>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="{{ url_for('index') }}">AI<span>Daily</span></a>
+      {% block topbar %}{% endblock %}
+    </div>
+  </header>
+  {% block content %}{% endblock %}
+  <footer class="site-footer">
+    <div class="wrap">
+      <span class="wordmark wordmark-small">AI<span>Daily</span></span>
+      <span>{{ ui.tagline }}</span>
+    </div>
+  </footer>
 </body>
 </html>

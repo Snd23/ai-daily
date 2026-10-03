@@ -670,6 +670,41 @@ masthead, sections, callouts and sources laid out like the PDF.
 - Flask's built-in server is fine locally; putting the site on the internet needs
   a hosting decision (separate task).
 
+## TASK-045 — Website design
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the user rejected TASK-044's plain styling (2026-10-03) and asked
+for a site designed like modern news sites.
+
+**Decisions (user, 2026-10-03):** stay on Python + Jinja + CSS (server-rendered,
+no JavaScript, no frontend build) over a Flask API with a React/Next.js or Astro
+frontend.
+
+**Scope:** `app/web/templates/`, `app/web/static/style.css`, page strings and two
+template filters in `app/web/server.py`, `tests/test_web.py`.
+
+**Out of scope:** any change to the stored edition, the composition or the PDF;
+new product content (e.g. a visible verification status, which the PDF also does
+not show).
+
+**Changes:** front page with a lead Top Story, sticky section index, per-section
+reading column, source count and reading time per story, labelled Developer
+Impact / AI Senza Sbatti boxes, sources as linked chips, home page with the latest
+edition's headlines and the archive, light/dark themes, phone layout. Google Fonts
+(Newsreader, JetBrains Mono) with system fallbacks. `docs/ARCHITECTURE.md` §4.16.
+
+**Verification results:** `pytest` 1042 passed; `ruff check` OK; `mypy` OK.
+Screenshots on a seeded database at 1280 px (light and dark) and 390 px; no
+horizontal overflow at 390 px (`scrollWidth` 390).
+
+**Flagged:**
+- Sources show the outlet name and date; the full URL is only the link target,
+  unlike the PDF's citation lines.
+- Google Fonts are fetched from Google's servers by each visitor; self-hosting the
+  two fonts would avoid that if the site goes public.
+- Top Stories still appear again in their section, as in the PDF, until TASK-041.
+
 ---
 
 ## Fix — CLI tests and the edition date (2026-10-03)

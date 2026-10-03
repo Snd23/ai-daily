@@ -120,6 +120,18 @@ def test_index_lists_published_editions_newest_first(database: _Database) -> Non
     assert "/editions/3" not in page
 
 
+def test_index_shows_the_latest_edition_with_its_top_stories(database: _Database) -> None:
+    database.add(1, day="2026-09-15", edition=_edition(_content(title="Older story")))
+    database.add(2, day="2026-09-16", edition=_edition(_content(title="Newest story")))
+    database.add(3, day="2026-09-14", language="it", edition=None)
+
+    page = _client(database, "en").get("/").get_data(as_text=True)
+
+    assert "Latest edition" in page
+    assert page.index("Newest story") < page.index("Older story")
+    assert "/editions/3" in page  # listed even without stored content
+
+
 def test_index_without_editions_says_so(database: _Database) -> None:
     page = _client(database, "it").get("/").get_data(as_text=True)
 
@@ -142,11 +154,13 @@ def test_edition_page_shows_the_stored_content(database: _Database) -> None:
 
     assert response.status_code == 200
     assert '<html lang="en">' in page
-    assert "September 16, 2026 — Edition No. 4" in page
+    assert "September 16, 2026" in page and "Edition No. 4" in page
     assert "TOP STORIES" in page and "MODELS &amp; LLMs" in page
     assert "<p>First paragraph.</p>" in page and "<p>Second paragraph.</p>" in page
-    assert "A new API endpoint." in page and "API, SDK" in page
+    assert "A new API endpoint." in page and "<li>API</li><li>SDK</li>" in page
     assert '<a href="https://reuters.com/x"' in page
+    assert "1 source" in page and "<time>2026-09-16</time>" in page
+    assert 'href="#models_llm"' in page
     assert "An excerpt that is never shown." not in page
     assert "/editions/4/pdf" in page
 
