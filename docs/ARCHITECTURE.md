@@ -73,7 +73,7 @@ Implementation status (up to TASK-028):
 |---|---|---|
 | COLLECT | `app/collectors/rss.py` | RSS only (`RssCollector`, TASK-007); no API or HTML collector |
 | NORMALIZE | `app/normalization/` | implemented (TASK-008): HTML stripping, text normalization, `content_hash`, language detection |
-| FILTER | `app/collectors/rss.py`, `app/database/article_repository.py` | **recency only** implemented (TASK-028, §4.15): the original proposal's source-tier and keyword heuristics remain not implemented, and no separate `app/filtering/` module was created |
+| FILTER | `app/collectors/rss.py`, `app/database/article_repository.py`, `app/relevance/` | recency (TASK-028, §4.15) and AI relevance by LLM (TASK-039, §4.1c, runs after CLUSTER EVENTS); the original proposal's source-tier and keyword heuristics remain not implemented, and no separate `app/filtering/` module was created |
 | DEDUPLICATE | `app/deduplication/` | implemented (TASK-009) as exact duplicate detection on `content_hash`; the rapidfuzz near-duplicate proposal was not adopted |
 | CLUSTER EVENTS | `app/clustering/` | implemented (TASK-012), see §4.1a; cross-source merge by LLM added in TASK-038, see §4.1b; lives in `app/clustering/`, not `app/deduplication/` |
 | VERIFY | `app/verification/` | implemented (TASK-017), deterministic, in-memory, see §4.3a; never produces `DEVELOPING`; no hedging-language detection |
@@ -212,6 +212,17 @@ The exact-title rule of §4.1a never joins outlets that title the same event dif
 - **Failure policy.** `app.pipeline.generation._merge_clusters` catches `LLMProviderError` and `ClusterMergeParseError`, logs a warning and keeps the exact-title clusters (CLAUDE.md §34).
 - **Scope.** The merger only groups: verification (§4.3), importance and categories are unchanged. It runs in the analysis phase on articles not yet assigned to an event; existing events are not recomputed. The analysis phase is therefore no longer LLM-free (one call per run, not per language).
 - **Known limit.** The decision uses titles only, so a loosely related article can join a group (real example: an article about the "dots" launch and the delay of a model release in the same event as three articles about OpenAI safety delays).
+
+#### 4.1c AI relevance filter (TASK-039)
+
+Sources that are not dedicated to AI also publish unrelated items (edition of 2026-10-01: a BMW Serie 3 review, a list of GeForce NOW games, an NVIDIA fellowship). `app/relevance/ai_relevance_filter.py` (`filter_ai_relevant`) splits the `ArticleCluster` list into kept and rejected clusters with one `LLMProvider.complete()` call per run. Keyword rules were considered and not adopted (user decision, 2026-10-03).
+
+- **Position.** Analysis phase, after the cross-source merge (§4.1b), so a merged cluster is judged once on the titles of its outlets, and before any `Event` is persisted. It runs once per article, not per language.
+- **LLM call.** Every cluster up to 150 (about 20 tokens each) is listed with up to 3 distinct titles joined by ` | `; clusters beyond the cap are kept unjudged. The prompt defines "about AI" (AI is central, not incidental), tells the model to keep an item when unsure, treats titles as untrusted data, and asks only for `NOT_AI: n, n, ...` or `NONE`. Token usage is logged as `stage=ai_relevance`.
+- **Validation.** Any other response (extra text, several lines, repeated or out-of-range numbers, an empty response) raises `AIRelevanceParseError`.
+- **Rejected clusters.** `ArticleRepository.mark_not_relevant` sets their articles to `status = 'discarded'` with `duplicate_of` NULL (which tells them apart from duplicates, TASK-009), in one transaction per cluster. They never become an `Event` and leave `list_clusterable`, so a later run does not judge them again.
+- **Failure policy.** `app.pipeline.generation._filter_relevant` catches `LLMProviderError` and `AIRelevanceParseError`, logs a warning and keeps every cluster (CLAUDE.md §34). A `ValueError` from `mark_not_relevant` skips that cluster for this run, like `assign_event` (§4.14).
+- **Scope.** Verification, importance and categories are unchanged; events already persisted are not re-judged.
 
 ### 4.2 Importance score
 PRD §10 lists the factors but not their weights. Original proposal (**historical, not adopted** — superseded by the TASK-013 implementation in §4.2a): a hybrid score where the LLM (`rank()`) returns a score with a textual rationale (for audit), corrected by auditable deterministic modifiers (tier of the sources involved, number of independent sources, `event_type`). A purely LLM, unweighted score would be poorly reproducible.
@@ -451,8 +462,9 @@ ai-daily run       stub -- exit code 1, no DB connection opened
 `app/pipeline/` is the `ORCHESTRATION` module of §2, and closes the MODEL B boundary described in §4.7: it is the first code that persists an `Event`, writes `Article.event_id` and writes `event_content`. It adds no domain logic to the stages it sequences -- the only logic it owns is what previously had no owner (category assignment, ranking factors, persistence sequencing).
 
 ```
-ANALYSIS (language-neutral, no LLM, once per article)
-    list_clusterable -> cluster_articles -> verify_cluster -> assign_category
+ANALYSIS (language-neutral, once per article; one merge and one relevance LLM call per run)
+    list_clusterable -> cluster_articles -> merge_similar_clusters (§4.1b)
+    -> filter_ai_relevant (§4.1c) -> verify_cluster -> assign_category
     -> assign_event_type -> build_ranking_input -> compute_importance_score
     -> Event persisted -> Article.event_id + status='processed'
 

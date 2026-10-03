@@ -4,8 +4,10 @@ Wires the stages that TASK-012 to TASK-022 implemented as pure, in-memory
 functions into one real, persisted run, closing the MODEL B boundary
 described in docs/ARCHITECTURE.md §4.7:
 
-    ANALYSIS (language-neutral, no LLM, runs once per article)
-        list_clusterable -> cluster_articles -> verify_cluster
+    ANALYSIS (language-neutral, runs once per article; one merge and one
+    relevance LLM call per run)
+        list_clusterable -> cluster_articles -> merge_similar_clusters
+        -> filter_ai_relevant -> verify_cluster
         -> assign_category -> assign_event_type -> build_ranking_input
         -> compute_importance_score -> Event persisted -> Article.event_id
 
@@ -74,6 +76,7 @@ from app.newspaper.renderer import NewspaperMetadata, render_edition
 from app.pipeline.categories import assign_category, assign_event_type
 from app.pipeline.ranking_factors import build_ranking_input
 from app.ranking.event_ranker import compute_importance_score
+from app.relevance.ai_relevance_filter import AIRelevanceParseError, filter_ai_relevant
 from app.verification.event_verifier import VerificationResult, verify_cluster
 
 logger = logging.getLogger(__name__)
@@ -265,8 +268,9 @@ def _analyze_pending_articles(
     """Cluster, verify, categorize and rank pending articles into `Event` rows.
 
     Language-neutral: this phase runs once per article, not once per edition
-    language (docs/PRD.md §38). Its only LLM call is the single cross-source
-    cluster merge (TASK-038). Returns the number of events created.
+    language (docs/PRD.md §38). Its only LLM calls are the single cross-source
+    cluster merge (TASK-038) and the single AI relevance filter (TASK-039).
+    Returns the number of events created.
     """
     clusterable = article_repository.list_clusterable(
         reference_date=edition_day, lookback_days=lookback_days
@@ -276,6 +280,7 @@ def _analyze_pending_articles(
         return 0
 
     clusters = _merge_clusters(llm_provider, cluster_articles(clusterable))
+    clusters = _filter_relevant(llm_provider, clusters, article_repository)
     created = 0
     for index, cluster in enumerate(clusters, start=1):
         try:
@@ -323,6 +328,41 @@ def _merge_clusters(
     if len(merged) < len(clusters):
         logger.info("Merged %d cluster(s) into %d", len(clusters), len(merged))
     return merged
+
+
+def _filter_relevant(
+    llm_provider: LLMProvider,
+    clusters: list[ArticleCluster],
+    article_repository: ArticleRepository,
+) -> list[ArticleCluster]:
+    """Keep the clusters about AI and discard the articles of the others (TASK-039).
+
+    A discarded article never becomes an event and is never judged again. If the
+    LLM call or its answer fails, every cluster is kept (CLAUDE.md §34).
+    """
+    try:
+        split = filter_ai_relevant(llm_provider, clusters)
+    except (LLMProviderError, AIRelevanceParseError) as exc:
+        logger.warning("AI relevance filter skipped: %s", exc)
+        return clusters
+    if split.usage is not None:
+        logger.info(
+            "LLM usage: stage=ai_relevance input_tokens=%d output_tokens=%d",
+            split.usage.input_tokens,
+            split.usage.output_tokens,
+        )
+    for cluster in split.rejected:
+        try:
+            article_repository.mark_not_relevant(
+                [article.id for article in cluster.articles if article.id is not None]
+            )
+        except ValueError as exc:
+            # Same rowcount-mismatch path as `_persist_event`'s `assign_event`:
+            # the cluster is left pending and judged again by the next run.
+            logger.warning("Cluster %r not discarded: %s", cluster.key, exc)
+            continue
+        logger.info("Not about AI, discarded: %r", cluster.articles[0].title)
+    return split.kept
 
 
 def _persist_event(
