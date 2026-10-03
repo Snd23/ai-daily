@@ -797,3 +797,69 @@ matters more here than in the merge: a rejection discards the articles for good.
   articles to `pending` by hand.
 - `uv run ruff format --check .` reports 20 files that are not formatted on
   `develop` already; the new files are formatted and the others were not touched.
+
+---
+
+## TASK-040 — Ranking: break ties between equal importance scores
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** importance factors take only two values each (TASK-024: 7.0 or
+3.0), so many events share the same score: on 2026-10-01 seven events tied at
+6.5. Among ties `_select_events` ordered by verification and then by event id,
+and `assemble_edition` re-sorted by event id alone, so the Top Stories were picked
+by arrival order in the database, and the two stages could disagree.
+
+**Decisions (user, 2026-10-03):**
+- Tie-break among equal `importance_score`: more distinct sources first (now
+  meaningful after TASK-038), then better verification, then the most recent
+  article, then event id. The score and its formula (TASK-013) are unchanged.
+- Default chosen by Claude: one ordering for the whole edition. The pipeline
+  passes each event's position in that ordering to `assemble_edition`
+  (`EventForEdition.selection_rank`), which uses it after the score, so the 15
+  selected events, the Top Stories and the sections all agree. Without a rank,
+  `assemble_edition` keeps ordering ties by event id (approved decision D-011).
+
+**Scope:** `app/pipeline/generation.py` (`_select_events` and the events it
+builds), `app/editorial/edition.py` (`EventForEdition`, `_sort_key`), tests,
+`docs/ARCHITECTURE.md`, `docs/PRD.md` §10, `TODO.md`.
+
+**Out of scope:** the importance formula and its factors, Top Stories repeated in
+the sections (TASK-041), relevance filtering (TASK-039).
+
+**Verification:** unit tests (edition ordering with and without a rank; selection
+ordering by source count, verification, recency, id); `uv run pytest`,
+`uv run ruff check .`, `uv run mypy`.
+
+**Changes:** `app/pipeline/generation.py` (`_select_events` takes the events'
+articles, read once per event and also used for the TASK-036 eligibility check;
+`_latest_published_timestamp`; `selection_rank` passed to `EventForEdition`);
+`app/editorial/edition.py` (`EventForEdition.selection_rank`, optional, and
+`_sort_key`); `tests/test_pipeline_generation.py`, `tests/test_edition.py`;
+`docs/ARCHITECTURE.md` §4.14; `docs/PRD.md` §10; `TODO.md`.
+
+**Verification results:**
+- `uv run pytest` 1045 passed (21:58 UTC); `uv run ruff check .` OK; `uv run mypy`
+  OK. After 22:00 UTC four `tests/test_cli.py` tests fail on `develop` too (see
+  Flagged); the other 1041 pass.
+- End-to-end test: two events with the same score, the two-source one created
+  second, now leads the Top Stories (before this task the one-source event, with
+  the lower id, did).
+- Independent review of the diff: no blocking finding; the wording ("distinct",
+  not "independent", sources), the count limited to cited articles, the optional
+  rank and a stronger recency test were applied.
+
+**Flagged:**
+- "Distinct sources" counts outlets, not truly independent confirmations
+  (CLAUDE.md §15): an outlet that copies another still counts. Same limit as the
+  verification rules (TASK-017).
+- Pre-existing, outside this task: `is_top_story` is given to the first three
+  selected events even when one is `UNVERIFIED` or fails, so that event gets the
+  long summary while `assemble_edition` keeps it out of the Top Stories and the
+  fourth event is promoted with a short one. Worth a separate task.
+- Pre-existing, outside this task: four `tests/test_cli.py` tests (`generate` and
+  `run`) build the expected PDF name from `date.today()` (the machine's date),
+  while the pipeline names it after today in `APP_TIMEZONE` (Europe/Rome). Between
+  midnight in Rome and midnight on the machine clock (22:00-24:00 UTC in summer)
+  the two dates differ and the tests fail, on `develop` as well. Worth a separate
+  small fix (use `datetime.now(APP_TIMEZONE).date()` in the tests).

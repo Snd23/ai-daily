@@ -208,6 +208,21 @@ def test_top_stories_tie_break_is_event_id_ascending() -> None:
     assert [content.event_id for content in edition.top_stories] == [2, 5, 9]
 
 
+def test_selection_rank_breaks_ties_before_event_id() -> None:
+    events = [
+        _event(content=_content(event_id=2), importance_score=7.0, selection_rank=2),
+        _event(content=_content(event_id=9), importance_score=7.0, selection_rank=1),
+        _event(content=_content(event_id=5), importance_score=8.0, selection_rank=3),
+    ]
+
+    edition = assemble_edition(language="en", events=events, max_top_stories=3)
+
+    # The score still comes first; the rank only orders equal scores (TASK-040).
+    assert [content.event_id for content in edition.top_stories] == [5, 9, 2]
+    section = next(section for section in edition.sections if section.slug == "models_llm")
+    assert [content.event_id for content in section.entries] == [5, 9, 2]
+
+
 def test_unverified_events_are_excluded_from_top_stories() -> None:
     events = [
         _event(

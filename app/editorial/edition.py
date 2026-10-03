@@ -73,6 +73,11 @@ class EventForEdition(BaseModel):
     `app.ranking.event_ranker.RankedEvent`) are neither computed nor
     reinterpreted here (approved decision D-006). `future_date` is likewise
     caller-supplied and untouched (approved decision D-010).
+
+    `selection_rank` is the caller's position for the event in its own
+    best-first ordering (TASK-040); it only breaks ties between equal
+    `importance_score` values. Either every event has one or none has: events
+    left at `None` fall back to `event_id`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -80,6 +85,7 @@ class EventForEdition(BaseModel):
     content: EditorialContent
     category: EditorialCategory
     importance_score: float = Field(ge=0.0, le=10.0)
+    selection_rank: int | None = Field(default=None, ge=0)
     future_date: str | None = None
 
 
@@ -122,9 +128,13 @@ class Edition(BaseModel):
         return value
 
 
-def _sort_key(event: EventForEdition) -> tuple[float, int]:
-    """Deterministic ordering (approved decision D-011): score desc, event_id asc."""
-    return (-event.importance_score, event.content.event_id)
+def _sort_key(event: EventForEdition) -> tuple[float, int, int]:
+    """Deterministic ordering (approved decision D-011): score desc, event_id asc.
+
+    Ties on the score are first broken by the caller's `selection_rank` (TASK-040).
+    """
+    rank = event.selection_rank if event.selection_rank is not None else 0
+    return (-event.importance_score, rank, event.content.event_id)
 
 
 def assemble_edition(
@@ -138,9 +148,9 @@ def assemble_edition(
     that no `event_id` is duplicated, then:
 
     - selects Top Stories: events with `content.verification_status !=
-      "UNVERIFIED"`, ordered by `importance_score` descending / `event_id`
-      ascending, truncated to `max_top_stories` (approved decisions
-      D-008/D-009/D-011);
+      "UNVERIFIED"`, ordered by `importance_score` descending /
+      `selection_rank` ascending / `event_id` ascending, truncated to
+      `max_top_stories` (approved decisions D-008/D-009/D-011, TASK-040);
     - groups every event into its `category` section, in the fixed
       canonical order, each internally ordered the same way (approved
       decision D-011); `UNVERIFIED` events are retained in their section

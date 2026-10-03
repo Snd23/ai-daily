@@ -492,7 +492,7 @@ def test_selection_keeps_the_most_important_events(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 2)
     events = [_event(1, 3.0), _event(2, 9.0), _event(3, 6.0), _event(4, 1.0)]
 
-    selected = generation_module._select_events(events)
+    selected = generation_module._select_events(events, {})
 
     assert [event.id for event in selected] == [2, 3]
 
@@ -508,7 +508,7 @@ def test_selection_prefers_the_better_verified_event_on_equal_importance(
         _event(4, 5.0, "PARTIALLY_VERIFIED"),
     ]
 
-    selected = generation_module._select_events(events)
+    selected = generation_module._select_events(events, {})
 
     assert [event.id for event in selected] == [3, 4]
 
@@ -516,9 +516,80 @@ def test_selection_prefers_the_better_verified_event_on_equal_importance(
 def test_selection_does_not_exclude_unverified_events_when_there_is_room() -> None:
     events = [_event(1, 5.0, "UNVERIFIED"), _event(2, 6.0)]
 
-    selected = generation_module._select_events(events)
+    selected = generation_module._select_events(events, {})
 
     assert {event.id for event in selected} == {1, 2}
+
+
+def _dated_article(article_id: int, source_id: int, published_at: str | None) -> Article:
+    return Article(
+        id=article_id,
+        source_id=source_id,
+        title=f"Story {article_id}",
+        url=f"https://example.com/{article_id}",
+        published_at=published_at,
+        fetched_at="2026-09-16T09:00:00+00:00",
+        raw_excerpt="x",
+    )
+
+
+def test_selection_prefers_more_independent_sources_on_equal_importance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_EDITION_EVENTS", 1)
+    events = [_event(1, 5.0), _event(2, 5.0, "PARTIALLY_VERIFIED")]
+    articles = {
+        1: [_dated_article(1, 10, None), _dated_article(2, 10, None)],  # one source twice
+        2: [_dated_article(3, 10, None), _dated_article(4, 11, None)],
+    }
+
+    selected = generation_module._select_events(events, articles)
+
+    assert [event.id for event in selected] == [2]
+
+
+def test_selection_prefers_the_most_recent_article_after_sources_and_verification() -> None:
+    events = [_event(1, 5.0), _event(2, 5.0), _event(3, 5.0)]
+    articles = {
+        1: [_dated_article(1, 10, None)],
+        2: [_dated_article(2, 10, "2026-09-15T23:00:00+00:00")],
+        3: [_dated_article(3, 10, "2026-09-16T06:00:00+00:00")],
+    }
+
+    selected = generation_module._select_events(events, articles)
+
+    # Newest first, ahead of a lower id; undated last: a missing date is never recent.
+    assert [event.id for event in selected] == [3, 2, 1]
+
+
+def test_top_stories_follow_the_selection_order_on_equal_importance(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    openai = _add_source(connection)
+    other = _add_source(connection, name="OpenAI mirror", url="https://mirror.test/feed")
+    # Clusters are persisted in title order, so the one-source event gets the lower id.
+    _add_article(
+        connection,
+        openai,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-y",
+    )
+    _add_article(connection, openai)  # "OpenAI ships Model X"
+    _add_article(connection, other, url="https://mirror.test/model-x", content_hash="hash-x2")
+
+    _generate(connection, output_dir)
+
+    events = {e.id: e for e in EventRepository(connection).list_by_created_date("2026-09-16")}
+    assert len({e.importance_score for e in events.values()}) == 1  # a real tie
+    row = connection.execute("SELECT content FROM edition").fetchone()
+    edition = Edition.model_validate_json(row[0])
+    repository = ArticleRepository(connection)
+    by_size = sorted(events, key=lambda event_id: len(repository.list_by_event(event_id or 0)))
+    one_source, two_sources = by_size
+    assert one_source is not None and two_sources is not None and one_source < two_sources
+    # Before TASK-040 the tie went to the lower event id, the one-source event.
+    assert [story.event_id for story in edition.top_stories] == [two_sources, one_source]
 
 
 def test_only_the_selected_events_reach_the_llm(
