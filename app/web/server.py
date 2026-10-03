@@ -17,6 +17,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import Flask, abort, g, render_template, send_file
 from flask.typing import ResponseReturnValue
@@ -33,17 +34,35 @@ _EDITION_NUMBER_LABEL: dict[str, str] = {"it": "Edizione n. {n}", "en": "Edition
 # masthead strings (not an addition to config/labels.yaml).
 _UI_TEXT: dict[str, dict[str, str]] = {
     "it": {
-        "editions": "Edizioni",
+        "tagline": "Le notizie sull'intelligenza artificiale, verificate ogni giorno",
+        "latest_edition": "Ultima edizione",
+        "read_edition": "Leggi l'edizione",
+        "archive": "Archivio",
         "no_editions": "Nessuna edizione pubblicata.",
         "all_editions": "Tutte le edizioni",
-        "download_pdf": "Scarica il PDF",
+        "download_pdf": "PDF",
+        "in_this_edition": "In questa edizione",
+        "story": "notizia",
+        "stories": "notizie",
+        "source": "fonte",
+        "sources": "fonti",
+        "minutes": "min",
         "no_content": "Il contenuto di questa edizione non è disponibile sul sito.",
     },
     "en": {
-        "editions": "Editions",
+        "tagline": "Artificial intelligence news, verified every day",
+        "latest_edition": "Latest edition",
+        "read_edition": "Read the edition",
+        "archive": "Archive",
         "no_editions": "No edition published yet.",
         "all_editions": "All editions",
-        "download_pdf": "Download the PDF",
+        "download_pdf": "PDF",
+        "in_this_edition": "In this edition",
+        "story": "story",
+        "stories": "stories",
+        "source": "source",
+        "sources": "sources",
+        "minutes": "min",
         "no_content": "This edition's content is not available on the site.",
     },
 }
@@ -111,13 +130,20 @@ def create_app(database_url: str, language: str) -> Flask:
         if connection is not None:
             connection.close()
 
+    @app.template_filter("domain")
+    def _domain(url: str) -> str:
+        return urlsplit(url).hostname or ""
+
     @app.template_filter("is_link")
     def _is_link(url: str) -> bool:
         return url.startswith("http://") or url.startswith("https://")
 
     @app.route("/")
     def index() -> ResponseReturnValue:
-        editions = [_edition_heading(record) for record in repository().list_published()]
+        editions = [
+            {**_edition_heading(record), "headlines": _headlines(record)}
+            for record in repository().list_published()
+        ]
         return render_template(
             "index.html", editions=editions, ui=_UI_TEXT[language], page_language=language
         )
@@ -125,7 +151,7 @@ def create_app(database_url: str, language: str) -> Flask:
     @app.route("/editions/<int:edition_number>")
     def edition(edition_number: int) -> ResponseReturnValue:
         record = _published_edition(repository(), edition_number)
-        content = Edition.model_validate_json(record.content) if record.content else None
+        content = _stored_edition(record)
         return render_template(
             "edition.html",
             heading=_edition_heading(record),
@@ -154,6 +180,17 @@ def _published_edition(repository: EditionRepository, edition_number: int) -> Ed
     if record is None or record.status != "published":
         abort(404)
     return record
+
+
+def _stored_edition(record: EditionRecord) -> Edition | None:
+    """The composed edition saved at publication (TASK-043), or `None` if absent."""
+    return Edition.model_validate_json(record.content) if record.content else None
+
+
+def _headlines(record: EditionRecord) -> list[str]:
+    """The titles shown for an edition in the archive: its Top Stories, in order."""
+    edition = _stored_edition(record)
+    return [story.title for story in edition.top_stories] if edition is not None else []
 
 
 def _edition_heading(record: EditionRecord) -> dict[str, object]:
