@@ -20,7 +20,7 @@ from app.database.edition import EditionRecord, EditionStatus
 
 _SELECT_COLUMNS = (
     "id, edition_number, date, language, pdf_path, status,"
-    " concept_deep_dive_id, concept_term_id, stats, created_at"
+    " concept_deep_dive_id, concept_term_id, stats, created_at, content"
 )
 
 
@@ -49,11 +49,11 @@ class EditionRepository:
             """
             INSERT INTO edition (
                 edition_number, date, language, pdf_path, status,
-                concept_deep_dive_id, concept_term_id, stats, created_at
+                concept_deep_dive_id, concept_term_id, stats, created_at, content
             )
             VALUES (
                 :edition_number, :date, :language, :pdf_path, :status,
-                :concept_deep_dive_id, :concept_term_id, :stats, :created_at
+                :concept_deep_dive_id, :concept_term_id, :stats, :created_at, :content
             )
             """,
             record.model_dump(exclude={"id"}),
@@ -74,15 +74,20 @@ class EditionRepository:
         ).fetchone()
         return _from_row(row) if row is not None else None
 
-    def update_pdf_path(self, edition_id: int, pdf_path: str, status: EditionStatus) -> None:
-        """Record where this edition's PDF was written, and its resulting status.
+    def publish(self, edition_id: int, pdf_path: str, content: str) -> None:
+        """Mark this edition `published`, with its PDF path and composed content.
+
+        `content` is the JSON of the `Edition` the PDF was rendered from
+        (TASK-043), written in the same statement as the PDF path so a
+        published edition never lacks one of the two.
 
         Raises:
             ValueError: if no row has `edition_id`.
         """
         cursor = self._connection.execute(
-            "UPDATE edition SET pdf_path = :pdf_path, status = :status WHERE id = :id",
-            {"id": edition_id, "pdf_path": pdf_path, "status": status},
+            "UPDATE edition SET pdf_path = :pdf_path, content = :content, status = 'published'"
+            " WHERE id = :id",
+            {"id": edition_id, "pdf_path": pdf_path, "content": content},
         )
         self._connection.commit()
         if cursor.rowcount == 0:
@@ -115,4 +120,5 @@ def _from_row(row: Any) -> EditionRecord:
         concept_term_id=row[7],
         stats=row[8],
         created_at=row[9],
+        content=row[10],
     )

@@ -584,3 +584,45 @@ that is not connected is ignored on its own; a malformed response rejects everyt
   are now scored with more than one source; their effect on importance is visible
   in the data (events with 4 sources reached 6.5) and belongs to TASK-040.
 
+## TASK-043 — Persist the composed edition
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the user wants a website showing the same news as the PDF
+(2026-10-03). The database stored events, their generated content and the
+edition row, but not which events made it into an edition nor how they were
+laid out (Top Stories, section order, citations): that composition existed only
+in memory between `assemble_edition` and `render_edition`.
+
+**Decisions (user, 2026-10-03):**
+- Work in two tasks: first persist the edition (this task), then the website
+  (TASK-044).
+- The website is a web app with a server reading the database (Flask), chosen
+  over a statically generated site. Its design belongs to TASK-044.
+- Store the composition as a JSON snapshot of the `Edition` on the `edition`
+  row rather than a normalized `edition_event` table: it is exactly what the PDF
+  was rendered from, it needs no recomposition by the reader, and later changes
+  to the composition rules (e.g. TASK-041) never rewrite past editions.
+
+**Scope:** migration `0004_edition_content.sql`, `EditionRecord.content`,
+`EditionRepository.publish` (replaces `update_pdf_path`, whose only caller set
+`published`), one line in `app/pipeline/generation.py`.
+
+**Out of scope:** the website, any change to the composition or the PDF,
+backfilling editions published before the migration.
+
+**Verification:** `pytest`, `ruff check`, `mypy`; a generation test reads the
+stored JSON back into an `Edition`.
+
+**Changes:** `app/database/migrations/0004_edition_content.sql` (new),
+`app/database/edition.py`, `app/database/edition_repository.py`,
+`app/pipeline/generation.py`, `tests/test_edition_repository.py`,
+`tests/test_pipeline_generation.py`, `docs/ARCHITECTURE.md` §3 and §4.14.
+
+**Verification results:** `pytest` 1032 passed; `ruff check` OK; `mypy` OK.
+No real run: the change does not touch an external service, and the generation
+test exercises the whole publish path on a migrated database.
+
+**Flagged:** editions published before this migration have `content = NULL`;
+the website will list them without content (or link only the PDF) unless they
+are regenerated.
