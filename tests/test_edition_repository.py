@@ -84,29 +84,33 @@ def test_get_by_date_and_language_returns_none_when_absent(
     assert EditionRepository(connection).get_by_date_and_language("2026-09-16", "it") is None
 
 
-def test_update_pdf_path_records_the_path_and_status(connection: sqlite3.Connection) -> None:
+def test_publish_records_the_path_the_content_and_the_status(
+    connection: sqlite3.Connection,
+) -> None:
     repository = EditionRepository(connection)
     created = repository.create(_make_record())
     assert created.id is not None
+    assert created.content is None
 
-    repository.update_pdf_path(created.id, "data/editions/2026-09-16-it.pdf", "published")
+    repository.publish(created.id, "data/editions/2026-09-16-it.pdf", '{"language": "it"}')
 
     stored = repository.get_by_date_and_language("2026-09-16", "it")
     assert stored is not None
     assert stored.pdf_path == "data/editions/2026-09-16-it.pdf"
+    assert stored.content == '{"language": "it"}'
     assert stored.status == "published"
 
 
-def test_update_pdf_path_rejects_an_unknown_edition(connection: sqlite3.Connection) -> None:
+def test_publish_rejects_an_unknown_edition(connection: sqlite3.Connection) -> None:
     with pytest.raises(ValueError, match="No edition found with id=999"):
-        EditionRepository(connection).update_pdf_path(999, "somewhere.pdf", "published")
+        EditionRepository(connection).publish(999, "somewhere.pdf", "{}")
 
 
 def test_update_status_changes_only_the_status(connection: sqlite3.Connection) -> None:
     repository = EditionRepository(connection)
     created = repository.create(_make_record())
     assert created.id is not None
-    repository.update_pdf_path(created.id, "data/editions/2026-09-16-it.pdf", "published")
+    repository.publish(created.id, "data/editions/2026-09-16-it.pdf", "{}")
 
     repository.update_status(created.id, "failed")
 
