@@ -42,6 +42,7 @@
 - [x] TASK-023 — CLI
 - [x] TASK-024 — Full pipeline
 - [ ] TASK-025 — GitHub Actions
+- [x] CodeQL code scanning workflow (no task number; part of the security tooling, not the TASK-025 pipeline run)
 
 ## Milestone 7 — Delivery
 

@@ -863,3 +863,20 @@ articles, read once per event and also used for the TASK-036 eligibility check;
   midnight in Rome and midnight on the machine clock (22:00-24:00 UTC in summer)
   the two dates differ and the tests fail, on `develop` as well. Worth a separate
   small fix (use `datetime.now(APP_TIMEZONE).date()` in the tests).
+
+---
+
+## CodeQL code scanning (2026-10-03)
+
+**Status:** DONE (awaiting merge).
+
+**Motivation:** the user asked to add CodeQL to the repository (2026-10-03).
+
+**Scope:** `.github/workflows/codeql.yml` only: Python analysis
+(`build-mode: none`) on pushes and pull requests to `develop` and `main`, and
+weekly on Monday. Results go to the repository's Security > Code scanning tab.
+**Out of scope:** TASK-025 (running the pipeline on a schedule), tests or lint in
+CI, other languages.
+
+**Verification:** the workflow runs on its own pull request; its result is the
+check reported there.
