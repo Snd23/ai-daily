@@ -30,6 +30,7 @@ from app.database.event_repository import EventRepository
 from app.database.migrations import run_migrations
 from app.database.source import Source
 from app.database.source_repository import SourceRepository
+from app.editorial.edition import Edition
 from app.llm.errors import LLMProviderError
 from app.llm.provider import CompletionRequest, CompletionResponse, LLMProvider, Usage
 from app.pipeline import generation as generation_module
@@ -349,6 +350,23 @@ def test_the_edition_row_records_the_pdf_path(
     assert record.edition_number == result.edition_number
     assert record.pdf_path == str(result.pdf_path)
     assert record.status == "published"
+
+
+def test_the_edition_row_stores_the_composed_edition_the_pdf_was_rendered_from(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    """TASK-043: a published edition carries its composition as JSON."""
+    _seed_one_event(connection)
+
+    _generate(connection, output_dir)
+
+    record = EditionRepository(connection).get_by_date_and_language("2026-09-16", "en")
+    assert record is not None and record.content is not None
+    edition = Edition.model_validate_json(record.content)
+    assert edition.language == "en"
+    assert [story.title for story in edition.top_stories] == ["OpenAI ships Model X"]
+    urls = {article.url for article in edition.top_stories[0].articles}
+    assert "https://reuters.com/openai-model-x" in urls
 
 
 def test_an_unverified_event_is_kept_out_of_top_stories(

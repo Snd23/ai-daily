@@ -19,6 +19,10 @@ publication-time concerns, not editorial content).
 the columns exist, but nothing populates them: concept selection remains
 undecided (docs/ARCHITECTURE.md §6, ambiguities #1 and #6) and edition
 statistics are not a TASK-024 requirement.
+
+`content` (TASK-043) is the composed `app.editorial.edition.Edition`,
+serialized as JSON when the edition is published: the same structure the
+PDF was rendered from.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ class EditionRecord(BaseModel):
     concept_term_id: int | None = None
     stats: str | None = None
     created_at: str
+    content: str | None = None
 
     @field_validator("language")
     @classmethod

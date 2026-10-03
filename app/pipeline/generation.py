@@ -15,6 +15,7 @@ described in docs/ARCHITECTURE.md §4.7:
         list_by_created_date -> summarize_event + analyze_developer_impact
         -> event_content persisted -> assemble_editorial_content
         -> assemble_edition -> render_edition -> PDF file + edition row
+        (with the composed edition as JSON, TASK-043)
 
 The two phases are separated exactly where docs/PRD.md §38 requires it:
 everything before `event_content` is language-neutral and is never redone
@@ -232,7 +233,7 @@ def generate_edition(
     pdf_path = output_dir / f"{edition_day.isoformat()}-{language}.pdf"
     output_dir.mkdir(parents=True, exist_ok=True)
     pdf_path.write_bytes(pdf)
-    edition_repository.update_pdf_path(record.id, str(pdf_path), "published")
+    edition_repository.publish(record.id, str(pdf_path), edition.model_dump_json())
 
     logger.info(
         "Edition %d (%s, %s) written to %s: %d event(s), %d created this run, %d failed",

@@ -584,6 +584,91 @@ that is not connected is ignored on its own; a malformed response rejects everyt
   are now scored with more than one source; their effect on importance is visible
   in the data (events with 4 sources reached 6.5) and belongs to TASK-040.
 
+## TASK-043 — Persist the composed edition
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the user wants a website showing the same news as the PDF
+(2026-10-03). The database stored events, their generated content and the
+edition row, but not which events made it into an edition nor how they were
+laid out (Top Stories, section order, citations): that composition existed only
+in memory between `assemble_edition` and `render_edition`.
+
+**Decisions (user, 2026-10-03):**
+- Work in two tasks: first persist the edition (this task), then the website
+  (TASK-044).
+- The website is a web app with a server reading the database (Flask), chosen
+  over a statically generated site. Its design belongs to TASK-044.
+- Store the composition as a JSON snapshot of the `Edition` on the `edition`
+  row rather than a normalized `edition_event` table: it is exactly what the PDF
+  was rendered from, it needs no recomposition by the reader, and later changes
+  to the composition rules (e.g. TASK-041) never rewrite past editions.
+
+**Scope:** migration `0004_edition_content.sql`, `EditionRecord.content`,
+`EditionRepository.publish` (replaces `update_pdf_path`, whose only caller set
+`published`), one line in `app/pipeline/generation.py`.
+
+**Out of scope:** the website, any change to the composition or the PDF,
+backfilling editions published before the migration.
+
+**Verification:** `pytest`, `ruff check`, `mypy`; a generation test reads the
+stored JSON back into an `Edition`.
+
+**Changes:** `app/database/migrations/0004_edition_content.sql` (new),
+`app/database/edition.py`, `app/database/edition_repository.py`,
+`app/pipeline/generation.py`, `tests/test_edition_repository.py`,
+`tests/test_pipeline_generation.py`, `docs/ARCHITECTURE.md` §3 and §4.14.
+
+**Verification results:** `pytest` 1032 passed; `ruff check` OK; `mypy` OK.
+No real run: the change does not touch an external service, and the generation
+test exercises the whole publish path on a migrated database.
+
+**Flagged:** editions published before this migration have `content = NULL`;
+the website will list them without content (or link only the PDF) unless they
+are regenerated.
+
+## TASK-044 — Web app showing the editions
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the user wants the news of the PDF available on a website too
+(2026-10-03), reading the editions saved to the database by TASK-043.
+
+**Decisions (user, 2026-10-03):** a web app with a server reading the database
+(Flask), chosen over a statically generated site. Defaults picked here: an
+archive page plus one page per edition, the PDF downloadable from the page,
+page chrome in the edition's language (the list page in `DEFAULT_LANGUAGE`),
+Flask's built-in server through a new `ai-daily web` command.
+
+**Scope:** `app/web/` (new: `server.py`, templates, stylesheet), the `web`
+command in `app/cli/main.py`, `EditionRepository.get_by_number` and
+`list_published`, the `flask` dependency.
+
+**Out of scope:** public hosting and its security (WSGI server, HTTPS,
+authentication), search, per-event pages, any change to the composition: the
+site shows exactly what the PDF shows, so a Top Story also appears in its
+section until TASK-041 changes the composition.
+
+**Verification:** `pytest`, `ruff check`, `mypy`; the app served on a database
+with two published editions and checked in a browser at desktop and phone width.
+
+**Changes:** `app/web/__init__.py`, `app/web/server.py`,
+`app/web/templates/{base,index,edition,_story}.html`, `app/web/static/style.css`,
+`app/cli/main.py`, `app/database/edition_repository.py`, `tests/test_web.py`,
+`pyproject.toml`, `uv.lock`, `README.md`, `docs/PRD.md` §36,
+`docs/ARCHITECTURE.md` §1.2, §2 and §4.16.
+
+**Verification results:** `pytest` 1041 passed; `ruff check` OK; `mypy` OK.
+`ai-daily web` on a seeded database: `/` and `/editions/2` return 200, the PDF
+route returns `application/pdf`; screenshots at 1280 px and 390 px show the
+masthead, sections, callouts and sources laid out like the PDF.
+
+**Flagged:**
+- The masthead month names are duplicated from `app/newspaper/renderer.py`
+  (private there); sharing them means touching the renderer, which TASK-042 is
+  changing. Worth a small follow-up once TASK-042 lands.
+- Flask's built-in server is fine locally; putting the site on the internet needs
+  a hosting decision (separate task).
 
 ---
 

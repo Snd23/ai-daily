@@ -52,14 +52,15 @@ After `uv sync`, the `ai-daily` command is available (via `uv run ai-daily ...` 
 uv run ai-daily --help
 ```
 
-Four commands are defined, per docs/PRD.md §32:
+Five commands are defined: the four of docs/PRD.md §32, plus `web`:
 
 - `ai-daily collect` — syncs `config/sources.yaml` into the database and fetches every active RSS source (TASK-007), persisting new articles no older than `NEWS_LOOKBACK_DAYS` (TASK-028; an article with no publication date is always kept).
 - `ai-daily process` — normalizes (TASK-008) and deduplicates (TASK-009) every `pending` article already collected.
 - `ai-daily generate [--language it|en]` — turns the articles already collected and processed into one edition: clusters them into events, verifies and ranks them, persists the `Event` and its generated content, assembles the newspaper and writes the PDF. Defaults to `DEFAULT_LANGUAGE`; one invocation produces one language. If no event can be included (none available, or every event failed to generate) it exits with code 1 and writes no PDF.
 - `ai-daily run [--language it|en]` — the full pipeline in one command: `collect`, then `process`, then `generate`. Stops at the first stage that fails.
+- `ai-daily web [--host 127.0.0.1] [--port 8000]` — serves the published editions as a website (TASK-044): an archive page and one page per edition with the same content as its PDF, plus a link to the PDF. Read-only; it uses Flask's built-in server, meant for local or private use, not for public hosting as is.
 
-`generate` and `run` call the configured LLM provider (summarization and Developer Impact), so `LLM_PROVIDER` and the matching API key must be set. The PDF is written next to the database, as `<database directory>/editions/<date>-<language>.pdf` (for the default `DATABASE_URL`, `data/editions/`), and its path is recorded on the edition row.
+`generate` and `run` call the configured LLM provider (summarization and Developer Impact), so `LLM_PROVIDER` and the matching API key must be set. The PDF is written next to the database, as `<database directory>/editions/<date>-<language>.pdf` (for the default `DATABASE_URL`, `data/editions/`), and its path is recorded on the edition row together with the composed edition, which the website shows.
 
 Re-running `generate` for the same day is safe: articles already attached to an event are not clustered again, already-generated content is reused instead of calling the LLM again, and the edition keeps its number while its PDF is rewritten.
 
@@ -77,7 +78,8 @@ Implemented so far, wired together by `app/pipeline/` (TASK-024) and driven by t
 - editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch);
 - PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations);
 - pipeline orchestration (`app/pipeline/`, TASK-024): sequences the stages above into one persisted run — `Event`, `Article.event_id`, generated content per language, and the edition's PDF — including deterministic category assignment and ranking factors;
-- a CLI (`app/cli/`, the `ai-daily` command, TASK-023/TASK-024) exposing `collect`, `process`, `generate` and `run` (see [Usage](#usage)).
+- a read-only web app (`app/web/`, Flask, TASK-044) showing the published editions with the same content as their PDF;
+- a CLI (`app/cli/`, the `ai-daily` command, TASK-023/TASK-024) exposing `collect`, `process`, `generate`, `run` and `web` (see [Usage](#usage)).
 
 Not implemented yet: filtering, hedging-language detection, a real LLM classifier (categories are currently derived deterministically from each source's configured tags), concept selection and the AI SENZA SBATTI section, What to Watch population, and automation (scheduling, Telegram, archive).
 

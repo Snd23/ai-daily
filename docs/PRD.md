@@ -929,6 +929,8 @@ V0.5
 
 Web archive.
 
+Brought forward on 2026-10-03 (TASK-044): a website shows every published edition with the same content as its PDF (Top Stories, sections, Developer Impact, sources) and links to the PDF. It is read-only, with no accounts and no search; it replaces the "Web application" exclusion of §31 for this purpose only.
+
 V1.0
 
 Complete AI Daily:
