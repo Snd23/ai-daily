@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}AI DAILY · {{ heading.date }}{% endblock %}
+{% block content %}
+<nav class="top-nav"><a href="{{ url_for('index') }}">← {{ ui.all_editions }}</a></nav>
+<header class="masthead">
+  <h1>AI DAILY</h1>
+  <p class="masthead-meta">{{ heading.date }} — {{ heading.label }}</p>
+  {% if has_pdf %}
+  <p><a class="pdf-link" href="{{ url_for('edition_pdf', edition_number=heading.number) }}">{{ ui.download_pdf }}</a></p>
+  {% endif %}
+</header>
+{% if edition is none %}
+<p class="empty">{{ ui.no_content }}</p>
+{% else %}
+  {% if edition.top_stories %}
+  <section>
+    <h2 class="section-heading">{{ labels.top_stories }}</h2>
+    {% for story in edition.top_stories %}{% include "_story.html" %}{% endfor %}
+  </section>
+  {% endif %}
+  {% for section in edition.sections if section.entries %}
+  <section>
+    <h2 class="section-heading">{{ section.label }}</h2>
+    {% for story in section.entries %}{% include "_story.html" %}{% endfor %}
+  </section>
+  {% endfor %}
+  {% if edition.what_to_watch %}
+  <section>
+    <h2 class="section-heading">{{ labels.what_to_watch }}</h2>
+    {% for story in edition.what_to_watch %}{% include "_story.html" %}{% endfor %}
+  </section>
+  {% endif %}
+{% endif %}
+{% endblock %}

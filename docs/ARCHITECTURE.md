@@ -34,6 +34,7 @@ Not explicitly required by the PRD, but necessary to satisfy a concrete requirem
 | Title deduplication/clustering | `rapidfuzz` — **historical proposal, not adopted** (see §4.1/§4.1a) | originally proposed for fuzzy title matching | TASK-012 implemented clustering as deterministic exact-match on a normalized title; no fuzzy-matching dependency is used |
 | CLI | `typer` (adopted, TASK-023) | typed signature consistent with CLAUDE.md §8; approved over the zero-dependency `argparse` alternative during TASK-023 FASE 0 -- see §4.13 | `argparse` |
 | Typed data validation (config, models, LLM I/O) | `pydantic` | validates settings, `sources.yaml`, `config/labels.yaml`, database models, and the LLM request/response and summarization models; LLM output is plain text parsed by the consuming stage, not JSON (see §4.8) | dataclasses + manual validation |
+| Web app showing the editions (TASK-044) | `flask` (adopted; brings `jinja2`, `werkzeug`) | the user chose a server reading the database over a statically generated site; Jinja2's HTML autoescaping keeps untrusted web-derived text inert (CLAUDE.md §10-11) -- see §4.16 | stdlib `http.server` + hand-written escaping (rejected: routing, templating and escaping by hand); static site generation (not chosen by the user) |
 | Lint | `ruff` | lint + formatting in a single tool | `flake8`+`black`+`isort` (more dependencies) |
 | Type checking | `mypy` | explicitly required as a gate (PRD §35) | — |
 | Tests | `pytest` (`pytest-cov` was proposed, not adopted) | PRD §25 | stdlib `unittest`, less ergonomic |
@@ -89,6 +90,7 @@ Implementation status (up to TASK-028):
 | LLM provider (not in the original mapping) | `app/llm/` | implemented (TASK-014), see §2.1a |
 | Configuration and logging (not in the original mapping) | `app/config/`, `app/logging_config.py` | implemented (TASK-002, TASK-003, TASK-006) |
 | DATA ACCESS | `app/database/` | connection, numbered SQL migrations, and models/repositories for `Source`, `Article`, `Event` (TASK-004, TASK-005, TASK-007, TASK-011), `EventContent` and `EditionRecord` (TASK-024, §4.14) |
+| WEB (not in the original mapping) | `app/web/` | implemented (TASK-044), see §4.16; a read-only Flask app showing the published editions from `edition.content` |
 | CLI (not in the original mapping) | `app/cli/` | implemented (TASK-023), see §4.13; wires `collect`/`process` to already-implemented stages, `generate`/`run` are explicit stubs |
 
 Key architectural point (detailed in §5): the pipeline splits into an **analysis phase** (Collect → Rank), entirely **language-independent**, and a **generation phase** (Summarize → PDF), **language-dependent**. This split is not visible in the folder structure but in the behavior of the individual modules.
@@ -494,6 +496,17 @@ Root cause this addresses: no stage read `published_at` for inclusion/exclusion 
 - **Absence of `published_at` is never staleness** (CLAUDE.md §17): an entry/article with no usable publication date always passes both filters, at any `lookback_days` including `0`. This is the same principle `_novelty` (§4.14) already applies to the same field.
 - **No retroactive cleanup.** Articles and events already persisted before this task (including AI Daily's own first-run backlog) are not touched: an already-`processed` article can never re-enter `list_clusterable` regardless of its age (§4.14's existing rerun guarantee), and no migration reclassifies or deletes existing rows. Re-running `collect`/`generate` today applies the new window only to articles collected/clustered from this point on.
 - **No schema change.** `published_at` already existed and was already nullable (TASK-007); the safety net's `WHERE` clause reads it as-is, with no new column and no new index (acceptable at the article volumes observed so far; revisit if `list_clusterable`'s query becomes a measured hot path).
+
+### 4.16 Web app (TASK-044)
+
+`app/web/server.py` (`create_app(database_url, language)`) is a read-only Flask app, served by `ai-daily web [--host] [--port]` (Flask's built-in server, default `127.0.0.1:8000`).
+
+- **Same content as the PDF, never recomposed.** An edition page deserializes `edition.content` (TASK-043, §3) into `app.editorial.edition.Edition` and renders it in its stored order: masthead (date and edition number in the PDF's format), Top Stories, the non-empty category sections, What to Watch, each story's summary paragraphs, Developer Impact / AI Senza Sbatti callouts and source citations (source name, `published_at`, URL; never `title` or `excerpt`, as in §4.12). Section labels come from `Edition` and `config/labels.yaml`. No LLM call, no write to the database.
+- **Routes.** `/` lists the `published` editions, newest first; `/editions/<edition_number>` shows one; `/editions/<edition_number>/pdf` serves its PDF from `edition.pdf_path` (relative paths resolve against the working directory, as the CLI writes them). An unknown or non-published edition, or a missing PDF file, is a 404. An edition published before TASK-043 (`content IS NULL`) shows a notice and the PDF link.
+- **Untrusted text.** Jinja2 autoescaping is on for every template; a citation URL is a link only when it is an absolute `http(s)` URL (the renderer's rule), with `rel="noopener noreferrer nofollow"`.
+- **Connections.** Migrations run once in `create_app`; each request opens its own `sqlite3` connection, closed at teardown, because a connection cannot be shared across the server's threads.
+- **Page chrome strings** ("All editions", "Download the PDF", ...) and the masthead month names live in `server.py`, like the renderer's masthead strings; the list page uses `DEFAULT_LANGUAGE`, an edition page its own language. The month names duplicate `app/newspaper/renderer.py`'s private table.
+- **Out of scope:** production hosting (a WSGI server, a reverse proxy, authentication), search, per-event pages.
 
 ---
 

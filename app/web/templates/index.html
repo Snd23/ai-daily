@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="masthead">
+  <h1><a href="{{ url_for('index') }}">AI DAILY</a></h1>
+  <p class="masthead-meta">{{ ui.editions }}</p>
+</header>
+{% if editions %}
+<ul class="edition-list">
+  {% for edition in editions %}
+  <li>
+    <a href="{{ url_for('edition', edition_number=edition.number) }}">
+      <span class="edition-date">{{ edition.date }}</span>
+      <span class="edition-label">{{ edition.label }} · {{ edition.language | upper }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">{{ ui.no_editions }}</p>
+{% endif %}
+{% endblock %}

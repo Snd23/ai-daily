@@ -33,6 +33,11 @@ dependencies = [
     # the stdlib `argparse` alternative during TASK-023 FASE 0.
     "typer>=0.27.2",
     "trafilatura>=2.2.0",
+    # Web app showing the published editions (TASK-044): a server reading
+    # the database was chosen by the user over a statically generated site.
+    # Brings Jinja2, whose HTML autoescaping keeps untrusted web-derived text
+    # (titles, summaries, source names) inert (CLAUDE.md §10-11).
+    "flask>=3.1",
 ]
 
 [project.scripts]

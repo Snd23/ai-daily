@@ -74,6 +74,22 @@ class EditionRepository:
         ).fetchone()
         return _from_row(row) if row is not None else None
 
+    def get_by_number(self, edition_number: int) -> EditionRecord | None:
+        """Return the edition with `edition_number`, or `None`."""
+        row = self._connection.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM edition WHERE edition_number = ?",
+            (edition_number,),
+        ).fetchone()
+        return _from_row(row) if row is not None else None
+
+    def list_published(self) -> list[EditionRecord]:
+        """Return every `published` edition, newest first (TASK-044)."""
+        rows = self._connection.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM edition WHERE status = 'published'"
+            " ORDER BY date DESC, edition_number DESC"
+        ).fetchall()
+        return [_from_row(row) for row in rows]
+
     def publish(self, edition_id: int, pdf_path: str, content: str) -> None:
         """Mark this edition `published`, with its PDF path and composed content.
 
