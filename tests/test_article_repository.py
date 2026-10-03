@@ -849,6 +849,49 @@ def test_assign_event_is_atomic_when_one_article_is_not_pending(
     assert refreshed.status == "pending"
 
 
+def test_mark_not_relevant_discards_articles_without_a_duplicate_link(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    article = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    _normalize(repository, article.id, content_hash="hash-1")  # type: ignore[arg-type]
+
+    repository.mark_not_relevant([article.id])  # type: ignore[list-item]
+
+    refreshed = repository.get_by_url("https://a.test/1")
+    assert refreshed is not None
+    assert refreshed.status == "discarded"
+    assert refreshed.duplicate_of is None
+    assert refreshed.event_id is None
+    # Discarded articles leave the clusterable pool (TASK-039).
+    assert repository.list_clusterable(reference_date=_REFERENCE_DATE, lookback_days=0) == []
+
+
+def test_mark_not_relevant_rejects_an_empty_or_repeated_id_list(
+    repository: ArticleRepository,
+) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        repository.mark_not_relevant([])
+    with pytest.raises(ValueError, match="repeated ids"):
+        repository.mark_not_relevant([1, 1])
+
+
+def test_mark_not_relevant_is_atomic_when_one_article_is_not_pending(
+    repository: ArticleRepository, source_id: int, connection: sqlite3.Connection
+) -> None:
+    pending = repository.create(_make_article(source_id=source_id, url="https://a.test/1"))
+    already_processed = repository.create(
+        _make_article(source_id=source_id, url="https://a.test/2")
+    )
+    _set_status(connection, already_processed.id, "processed")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="only 1 row"):
+        repository.mark_not_relevant([pending.id, already_processed.id])  # type: ignore[list-item]
+
+    refreshed = repository.get_by_url("https://a.test/1")
+    assert refreshed is not None
+    assert refreshed.status == "pending"
+
+
 def test_list_by_event_returns_nothing_for_an_unknown_event(
     repository: ArticleRepository,
 ) -> None:

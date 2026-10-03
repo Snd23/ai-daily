@@ -73,7 +73,7 @@ Implemented so far, wired together by `app/pipeline/` (TASK-024) and driven by t
 - configuration (`.env` settings, `config/sources.yaml`, `config/labels.yaml`) and logging;
 - SQLite schema, migrations and repositories for sources, articles, events, generated event content and editions;
 - RSS collection, article normalization and deduplication;
-- event clustering, deterministic event verification and deterministic importance ranking;
+- event clustering (with an LLM cross-source merge), an LLM filter that drops news not about AI, deterministic event verification and deterministic importance ranking;
 - the LLM provider abstraction (Anthropic, OpenAI, Gemini), in-memory event summarization, AI Senza Sbatti concept explanation and Developer Impact assessment;
 - editorial content assembly and newspaper layout composition (Top Stories, category sections, What to Watch);
 - PDF rendering (`app/newspaper/`, ReportLab): turns an already-composed `Edition` into a complete newspaper PDF (masthead, Top Stories, category sections, What to Watch, page numbers, per-story source citations);

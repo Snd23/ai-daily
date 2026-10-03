@@ -59,14 +59,18 @@ class _FakeLLMProvider(LLMProvider):
         self.summary_response = summary_response
         self.developer_impact_response = developer_impact_response
         self.fail_with = fail_with
+        # Content generation calls only; the analysis-phase calls (cluster merge,
+        # AI relevance filter) are recorded apart in `analysis_requests`.
         self.requests: list[CompletionRequest] = []
+        self.analysis_requests: list[CompletionRequest] = []
 
     def complete(self, request: CompletionRequest) -> CompletionResponse:
-        self.requests.append(request)
+        text = "\n".join(message.content for message in request.messages)
+        is_analysis = "event grouping stage" in text or "relevance filter stage" in text
+        (self.analysis_requests if is_analysis else self.requests).append(request)
         if self.fail_with is not None:
             raise self.fail_with
-        text = "\n".join(message.content for message in request.messages)
-        if "event grouping stage" in text:
+        if is_analysis:
             return CompletionResponse(text="NONE")
         if "HAS_DEVELOPER_IMPACT" in text:
             return CompletionResponse(text=self.developer_impact_response)
@@ -537,12 +541,7 @@ def test_only_the_selected_events_reach_the_llm(
     assert _count(connection, "event") == 2
     assert result.events_in_edition == 1
     assert _count(connection, "event_content") == 1
-    generation_requests = [
-        request
-        for request in provider.requests
-        if "event grouping stage" not in request.messages[0].content
-    ]
-    assert len(generation_requests) == 2  # summarize + developer impact, for one event only
+    assert len(provider.requests) == 2  # summarize + developer impact, for one event only
 
 
 # --- events whose articles have no text (TASK-036) ---------------------------
@@ -934,7 +933,7 @@ class _MergingProvider(_FakeLLMProvider):
         if self.grouping_answer is not None and "event grouping stage" in (
             request.messages[0].content
         ):
-            self.requests.append(request)
+            self.analysis_requests.append(request)
             return CompletionResponse(text=self.grouping_answer)
         return super().complete(request)
 
@@ -958,3 +957,99 @@ def test_a_failing_merge_call_falls_back_to_the_exact_title_clusters(
 
     assert _count(connection, "event") == 2
 
+
+
+# --- AI relevance filter (TASK-039) ------------------------------------------
+
+
+class _RelevanceProvider(_FakeLLMProvider):
+    """Answers the relevance call by rejecting the items whose title contains `not_ai`."""
+
+    def __init__(
+        self,
+        not_ai: str | None = None,
+        answer: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.not_ai = not_ai
+        self.answer = answer
+        self.error = error
+
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        if "relevance filter stage" not in request.messages[0].content:
+            return super().complete(request)
+        self.analysis_requests.append(request)
+        if self.error is not None:
+            raise self.error
+        if self.answer is not None:
+            return CompletionResponse(text=self.answer)
+        numbers = [
+            line.split(".", 1)[0]
+            for line in request.messages[1].content.splitlines()
+            if self.not_ai is not None and self.not_ai in line
+        ]
+        return CompletionResponse(text=f"NOT_AI: {', '.join(numbers)}" if numbers else "NONE")
+
+
+def _add_ai_and_car_articles(connection: sqlite3.Connection) -> None:
+    source = _add_source(connection, name="BBC", url="https://bbc.co.uk/feed", tier=2)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="BMW 3 Series review",
+        url="https://bbc.co.uk/bmw",
+        content_hash="hash-bmw",
+    )
+
+
+def _article_statuses(connection: sqlite3.Connection) -> dict[str, tuple[str, int | None]]:
+    rows = connection.execute("SELECT title, status, event_id FROM article").fetchall()
+    return {title: (status, event_id) for title, status, event_id in rows}
+
+
+def test_clusters_not_about_ai_are_discarded_and_never_become_events(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _add_ai_and_car_articles(connection)
+
+    result = _generate(connection, output_dir, provider=_RelevanceProvider(not_ai="BMW"))
+
+    assert _count(connection, "event") == 1
+    assert result.events_in_edition == 1
+    statuses = _article_statuses(connection)
+    assert statuses["BMW 3 Series review"] == ("discarded", None)
+    assert statuses["OpenAI ships Model X"][0] == "processed"
+
+
+def test_a_discarded_article_is_not_judged_again_by_a_later_run(
+    connection: sqlite3.Connection, output_dir: Path
+) -> None:
+    _add_ai_and_car_articles(connection)
+    _generate(connection, output_dir, provider=_RelevanceProvider(not_ai="BMW"))
+
+    provider = _RelevanceProvider(not_ai="Model X")
+    _generate(connection, output_dir, provider=provider)
+
+    assert provider.analysis_requests == []
+    assert _count(connection, "event") == 1
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        _RelevanceProvider(answer="not an answer"),
+        _RelevanceProvider(error=LLMProviderError("provider is unavailable")),
+    ],
+    ids=["malformed-answer", "provider-error"],
+)
+def test_a_failing_relevance_call_keeps_every_cluster(
+    connection: sqlite3.Connection, output_dir: Path, provider: _RelevanceProvider
+) -> None:
+    _add_ai_and_car_articles(connection)
+
+    _generate(connection, output_dir, provider=provider)
+
+    assert _count(connection, "event") == 2
+    assert all(status == "processed" for status, _ in _article_statuses(connection).values())

@@ -247,6 +247,8 @@ Each stage must be separate and testable.
 
 CLUSTER EVENTS groups articles by the event they report, including articles from different outlets whose titles differ; when this grouping cannot be done, articles are grouped only when their titles are identical and the run continues.
 
+Only news about artificial intelligence enters the newspaper: a news item in which AI is absent or incidental (a car review, a list of video games, a fellowship with no AI focus) is left out, even when it comes from a company that works on AI. When in doubt the item is kept. When this check cannot be done, every news item is kept and the run continues.
+
 The SUMMARIZE stage is specified in §41.
 
 ⸻
