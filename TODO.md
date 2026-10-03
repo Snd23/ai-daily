@@ -69,6 +69,7 @@
 - [ ] TASK-040 — Ranking: break ties between equal importance scores
 - [ ] TASK-041 — Do not repeat Top Stories in the sections
 - [ ] TASK-042 — Human-readable source dates in citations
+- [x] Fix — CLI tests expect the PDF date in `APP_TIMEZONE` (no task number)
 
 ## Milestone 10 — Website (details in `docs/TASK_LOG.md`)
 

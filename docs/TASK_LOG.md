@@ -707,6 +707,26 @@ horizontal overflow at 390 px (`scrollWidth` 390).
 
 ---
 
+## Fix — CLI tests and the edition date (2026-10-03)
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** four `tests/test_cli.py` tests (`generate` and `run`) built the
+expected PDF name from `date.today()`, the machine's date, while the pipeline
+names the PDF after today in `APP_TIMEZONE` (Europe/Rome). From midnight in Rome
+to midnight on the machine clock (22:00-24:00 UTC in summer) the dates differ and
+the four tests failed on `develop`. Found while verifying TASK-040.
+
+**Scope:** `tests/test_cli.py` only: a `_edition_day()` helper returning
+`datetime.now(APP_TIMEZONE).date()`. **Out of scope:** application code, the
+existing formatting of the file.
+
+**Verification results:** at 22:00 UTC on 2026-10-03, `uv run pytest` gave 4
+failed / 1037 passed on `develop`, and 1041 passed with this fix;
+`uv run ruff check .` OK; `uv run mypy` OK.
+
+---
+
 ## CodeQL code scanning (2026-10-03)
 
 **Status:** DONE (awaiting merge).
