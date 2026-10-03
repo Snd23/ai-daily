@@ -28,6 +28,7 @@ from typer.testing import CliRunner
 
 from app.cli import main as cli_main
 from app.cli.main import app
+from app.config.settings import APP_TIMEZONE
 from app.database.article import Article
 from app.database.article_repository import ArticleRepository
 from app.database.connection import get_connection
@@ -55,6 +56,12 @@ sources:
     reliability_weight: 1.0
     is_active: true
 """
+
+
+def _edition_day() -> date:
+    """Today in `APP_TIMEZONE`, as the pipeline names the PDF (not the machine's date)."""
+    return datetime.now(APP_TIMEZONE).date()
+
 
 def _rfc822(days_ago: int) -> str:
     """An RFC-822 `pubDate` string `days_ago` days before real "now".
@@ -358,7 +365,7 @@ def test_generate_writes_a_pdf_and_reports_it(
 
     assert result.exit_code == 0, result.output
     assert "1 event(s)" in result.output
-    pdf_path = workspace.parent / "editions" / f"{date.today().isoformat()}-it.pdf"
+    pdf_path = workspace.parent / "editions" / f"{_edition_day().isoformat()}-it.pdf"
     assert pdf_path.exists()
     assert str(pdf_path) in result.output
 
@@ -372,7 +379,7 @@ def test_generate_uses_the_configured_default_language(
     result = runner.invoke(app, ["generate"])
 
     assert result.exit_code == 0, result.output
-    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+    assert (workspace.parent / "editions" / f"{_edition_day().isoformat()}-en.pdf").exists()
 
 
 def test_generate_accepts_an_explicit_language(
@@ -383,7 +390,7 @@ def test_generate_accepts_an_explicit_language(
     result = runner.invoke(app, ["generate", "--language", "en"])
 
     assert result.exit_code == 0, result.output
-    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+    assert (workspace.parent / "editions" / f"{_edition_day().isoformat()}-en.pdf").exists()
 
 
 def test_generate_with_no_event_fails_without_writing_a_pdf(
@@ -434,7 +441,7 @@ def test_run_executes_collect_process_and_generate(
     # process
     assert "Normalized 2 article" in result.output
     # generate
-    assert (workspace.parent / "editions" / f"{date.today().isoformat()}-en.pdf").exists()
+    assert (workspace.parent / "editions" / f"{_edition_day().isoformat()}-en.pdf").exists()
 
 
 def test_run_stops_at_the_first_failing_stage(
