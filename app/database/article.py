@@ -16,7 +16,9 @@ stage (event clustering) and stays `None` on every `Article`.
 normalization stage. `duplicate_of` is populated by TASK-009's
 deduplication stage: `None` means the article is not a duplicate (either
 not yet evaluated, or kept as canonical); a persisted `id` means the
-article was discarded as a duplicate of that other `Article`.
+article was discarded as a duplicate of that other `Article`. An article
+with `status = 'discarded'` and no `duplicate_of` was discarded as not about
+AI (TASK-039).
 """
 
 from __future__ import annotations
