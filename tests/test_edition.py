@@ -12,6 +12,8 @@ from pydantic import ValidationError
 
 from app.editorial.edition import (
     _EDITORIAL_CATEGORIES,
+    Edition,
+    EditionSection,
     EventForEdition,
     assemble_edition,
 )
@@ -219,8 +221,64 @@ def test_selection_rank_breaks_ties_before_event_id() -> None:
 
     # The score still comes first; the rank only orders equal scores (TASK-040).
     assert [content.event_id for content in edition.top_stories] == [5, 9, 2]
-    section = next(section for section in edition.sections if section.slug == "models_llm")
+
+    sections_only = assemble_edition(language="en", events=events, max_top_stories=0)
+    section = next(section for section in sections_only.sections if section.slug == "models_llm")
     assert [content.event_id for content in section.entries] == [5, 9, 2]
+
+
+# --- Top Stories are not repeated in the sections (TASK-041) ---------------------------------
+
+
+def _section(edition: Edition, slug: str) -> EditionSection:
+    return next(section for section in edition.sections if section.slug == slug)
+
+
+def test_a_top_story_is_not_repeated_in_its_section() -> None:
+    events = [
+        _event(content=_content(event_id=1), category="robotics", importance_score=9.0),
+        _event(content=_content(event_id=2), category="robotics", importance_score=5.0),
+        _event(content=_content(event_id=3), category="robotics", importance_score=7.0),
+    ]
+
+    edition = assemble_edition(language="en", events=events, max_top_stories=2)
+
+    assert [content.event_id for content in edition.top_stories] == [1, 3]
+    assert [content.event_id for content in _section(edition, "robotics").entries] == [2]
+
+
+def test_a_section_whose_events_are_all_top_stories_is_left_empty() -> None:
+    events = [_event(content=_content(event_id=1), category="robotics")]
+
+    edition = assemble_edition(language="en", events=events, max_top_stories=3)
+
+    assert [content.event_id for content in edition.top_stories] == [1]
+    assert _section(edition, "robotics").entries == ()
+    assert len(edition.sections) == 9
+
+
+def test_an_unverified_event_stays_in_its_section_because_it_is_never_a_top_story() -> None:
+    events = [
+        _event(
+            content=_content(event_id=1, verification_status="UNVERIFIED"),
+            category="robotics",
+            importance_score=10.0,
+        ),
+        _event(content=_content(event_id=2), category="robotics", importance_score=1.0),
+    ]
+
+    edition = assemble_edition(language="en", events=events, max_top_stories=1)
+
+    assert [content.event_id for content in edition.top_stories] == [2]
+    assert [content.event_id for content in _section(edition, "robotics").entries] == [1]
+
+
+def test_what_to_watch_keeps_a_top_story_that_has_a_future_date() -> None:
+    events = [_event(content=_content(event_id=1), future_date="2026-03-01")]
+
+    edition = assemble_edition(language="en", events=events, max_top_stories=1)
+
+    assert [content.event_id for content in edition.what_to_watch] == [1]
 
 
 def test_unverified_events_are_excluded_from_top_stories() -> None:
@@ -293,7 +351,7 @@ def test_events_are_grouped_into_their_declared_category() -> None:
         _event(content=_content(event_id=3), category="robotics"),
     ]
 
-    edition = assemble_edition(language="en", events=events, max_top_stories=5)
+    edition = assemble_edition(language="en", events=events, max_top_stories=0)
 
     robotics = next(section for section in edition.sections if section.slug == "robotics")
     hardware = next(section for section in edition.sections if section.slug == "hardware")
@@ -307,7 +365,7 @@ def test_section_entries_are_sorted_by_importance_score_descending() -> None:
         _event(content=_content(event_id=2), category="startups", importance_score=8.0),
     ]
 
-    edition = assemble_edition(language="en", events=events, max_top_stories=5)
+    edition = assemble_edition(language="en", events=events, max_top_stories=0)
 
     startups = next(section for section in edition.sections if section.slug == "startups")
     assert [content.event_id for content in startups.entries] == [2, 1]
@@ -413,7 +471,7 @@ def test_preserves_the_original_editorial_content_objects() -> None:
     content = _content(event_id=1)
     event = _event(content=content, category="ai_research")
 
-    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+    edition = assemble_edition(language="en", events=[event], max_top_stories=0)
 
     ai_research = next(section for section in edition.sections if section.slug == "ai_research")
     assert ai_research.entries[0] is content

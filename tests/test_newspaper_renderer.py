@@ -249,7 +249,8 @@ def test_render_edition_section_order_matches_edition_sections_order() -> None:
 
 def test_render_edition_omits_empty_sections() -> None:
     event = _event(category="models_llm", content=_content(title="Only models story"))
-    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+    # max_top_stories=0 keeps the event in its section (a Top Story is not repeated there).
+    edition = assemble_edition(language="en", events=[event], max_top_stories=0)
 
     text = _extract_text(render_edition(edition, metadata=_metadata()))
 
@@ -669,12 +670,13 @@ def test_render_edition_renders_italian_accented_characters() -> None:
 
 
 def test_render_edition_produces_at_least_two_pages_for_a_non_empty_edition() -> None:
-    event = _event()
-    edition = assemble_edition(language="en", events=[event], max_top_stories=5)
+    events = [_event(), _event(content=_content(event_id=2, title="Second story"))]
+    edition = assemble_edition(language="en", events=events, max_top_stories=1)
 
     result = render_edition(edition, metadata=_metadata())
 
-    # Structural page break: Top Stories -> category sections (always present).
+    # Structural page break: Top Stories -> category sections (the second story is
+    # not a Top Story, so its section exists).
     assert _page_count(result) >= 2
 
 

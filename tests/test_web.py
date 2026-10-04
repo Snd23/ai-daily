@@ -47,12 +47,14 @@ def _content(**overrides: Any) -> EditorialContent:
     return EditorialContent.model_validate(values)
 
 
-def _edition(*contents: EditorialContent, language: str = "en") -> Edition:
+def _edition(
+    *contents: EditorialContent, language: str = "en", max_top_stories: int = 3
+) -> Edition:
     events = [
         EventForEdition(content=content, category="models_llm", importance_score=5.0)
         for content in contents
     ]
-    return assemble_edition(language, events, 3)
+    return assemble_edition(language, events, max_top_stories)
 
 
 class _Database:
@@ -147,7 +149,13 @@ def test_edition_page_shows_the_stored_content(database: _Database) -> None:
         technical_area=["API", "SDK"],
         breaking_change=False,
     )
-    database.add(4, edition=_edition(_content(developer_impact=impact)))
+    # One Top Story and one more story, so the models section (which does not repeat
+    # the Top Story) is on the page.
+    section_story = _content(event_id=2, title="A section story")
+    database.add(
+        4,
+        edition=_edition(_content(developer_impact=impact), section_story, max_top_stories=1),
+    )
 
     response = _client(database).get("/editions/4")
     page = response.get_data(as_text=True)
@@ -163,6 +171,9 @@ def test_edition_page_shows_the_stored_content(database: _Database) -> None:
     assert 'href="#models_llm"' in page
     assert "An excerpt that is never shown." not in page
     assert "/editions/4/pdf" in page
+    # The Top Story is on the page once (not again in its section); the other story once.
+    assert page.count("OpenAI announces X") == 1
+    assert page.count("A section story") == 1
 
 
 def test_untrusted_text_is_escaped_and_unsafe_urls_are_not_linked(database: _Database) -> None:
