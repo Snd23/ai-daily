@@ -498,6 +498,8 @@ AI SENZA SBATTI
 TERMINE DEL GIORNO
 WHAT TO WATCH
 
+A story shown in TOP STORIES is not repeated in its category section: each news item appears once in the edition (§8).
+
 The number of pages must be dynamic.
 
 Indicatively:

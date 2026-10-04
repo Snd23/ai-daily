@@ -880,3 +880,62 @@ CI, other languages.
 
 **Verification:** the workflow runs on its own pull request; its result is the
 check reported there.
+
+---
+
+## TASK-041 — Do not repeat Top Stories in the sections
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** `assemble_edition` put every event in its category section,
+including the events already chosen as Top Stories, so the PDF and the website
+showed the same story twice (edition of 2026-10-01: all Top Stories printed again
+in their section). CLAUDE.md §16: the newspaper must not repeat the same news item.
+
+**Decisions (defaults chosen by Claude, none open to the user):**
+- A Top Story is left out of its category section; the story keeps its place and
+  full text on page 1, and its section shows only the other stories. A section
+  left with no entry is omitted by the PDF and the website, as already
+  specified (TASK-021, TASK-044).
+- What to Watch keeps its own rule (an event with a `future_date`, no exclusion):
+  it answers a different question ("what is coming") and nothing populates
+  `future_date` yet (docs/ARCHITECTURE.md §4.6), so it is left unchanged.
+
+**Scope:** `app/editorial/edition.py` (`assemble_edition` only), its tests,
+`docs/ARCHITECTURE.md`, `docs/PRD.md` §17, `TODO.md`. The renderer and the web
+templates already render `Edition` as composed and do not change.
+
+**Out of scope:** how Top Stories are chosen, the ordering, What to Watch,
+the `is_top_story` summary-length issue flagged in TASK-040.
+
+**Verification:** unit tests (a Top Story absent from its section, the other
+stories of the section kept in order, a section left empty, no Top Stories means
+unchanged sections, UNVERIFIED events stay in their section); `uv run pytest`,
+`uv run ruff check .`, `uv run mypy`; the existing renderer and web tests still
+pass on the new `Edition`.
+
+**Changes:** `app/editorial/edition.py` (`assemble_edition`: the sections skip the
+events selected as Top Stories); `tests/test_edition.py` (4 new tests; 4 existing
+tests now use `max_top_stories=0` or 1 so they still exercise the sections),
+`tests/test_newspaper_renderer.py` and `tests/test_web.py` (two and one existing
+tests given a second story so a section exists; the web test also checks each
+title appears once), `tests/test_pipeline_generation.py` (stored edition);
+`docs/ARCHITECTURE.md` §4.14; `docs/PRD.md` §17; `TODO.md`.
+
+**Verification results:**
+- `uv run pytest` 1072 passed; `uv run ruff check .` OK; `uv run mypy` OK. As on
+  `develop`, `uv run ruff format --check .` still reports files that were not
+  formatted before; the lines touched here follow it and nothing else was
+  reformatted.
+- Independent review of the diff: no blocking finding; the unrelated reformatting
+  it noticed was reverted and the ordering test keeps its three-event check.
+- The renderer and the web templates needed no change: they render the `Edition`
+  as composed.
+
+**Flagged:**
+- Editions already published (stored JSON and PDF) keep their duplicates; only new
+  editions are composed this way.
+- With few stories a category section can disappear entirely (all its stories are
+  Top Stories), and page 2 can be short. That follows from the PRD layout.
+- What to Watch can still repeat a Top Story with a `future_date`; nothing
+  populates `future_date` yet.

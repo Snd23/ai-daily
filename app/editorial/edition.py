@@ -151,9 +151,10 @@ def assemble_edition(
       "UNVERIFIED"`, ordered by `importance_score` descending /
       `selection_rank` ascending / `event_id` ascending, truncated to
       `max_top_stories` (approved decisions D-008/D-009/D-011, TASK-040);
-    - groups every event into its `category` section, in the fixed
-      canonical order, each internally ordered the same way (approved
-      decision D-011); `UNVERIFIED` events are retained in their section
+    - groups every event that is not a Top Story into its `category`
+      section, in the fixed canonical order, each internally ordered the
+      same way (approved decision D-011; a Top Story is not repeated in its
+      section, TASK-041); `UNVERIFIED` events are retained in their section
       (D-009 excludes them only from Top Stories);
     - selects What to Watch: events with `future_date is not None`, in the
       same order, with no other criterion and no exclusion of `UNVERIFIED`
@@ -203,9 +204,9 @@ def assemble_edition(
     top_story_candidates = [
         event for event in events if event.content.verification_status != "UNVERIFIED"
     ]
-    top_stories = tuple(
-        event.content for event in sorted(top_story_candidates, key=_sort_key)[:max_top_stories]
-    )
+    top_story_events = sorted(top_story_candidates, key=_sort_key)[:max_top_stories]
+    top_stories = tuple(event.content for event in top_story_events)
+    top_story_ids = {event.content.event_id for event in top_story_events}
 
     labels = _section_labels()
     sections = tuple(
@@ -215,7 +216,13 @@ def assemble_edition(
             entries=tuple(
                 event.content
                 for event in sorted(
-                    (event for event in events if event.category == category), key=_sort_key
+                    (
+                        event
+                        for event in events
+                        if event.category == category
+                        and event.content.event_id not in top_story_ids
+                    ),
+                    key=_sort_key,
                 )
             ),
         )

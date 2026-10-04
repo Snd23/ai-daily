@@ -592,6 +592,31 @@ def test_top_stories_follow_the_selection_order_on_equal_importance(
     assert [story.event_id for story in edition.top_stories] == [two_sources, one_source]
 
 
+def test_a_top_story_is_not_repeated_in_its_section_of_the_stored_edition(
+    connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation_module, "MAX_TOP_STORIES", 1)
+    source = _add_source(connection)
+    _add_article(connection, source)
+    _add_article(
+        connection,
+        source,
+        title="Anthropic ships Model Y",
+        url="https://openai.com/news/model-y",
+        content_hash="hash-model-y",
+    )
+
+    _generate(connection, output_dir)
+
+    edition = Edition.model_validate_json(
+        connection.execute("SELECT content FROM edition").fetchone()[0]
+    )
+    assert len(edition.top_stories) == 1
+    in_sections = [content.event_id for section in edition.sections for content in section.entries]
+    assert len(in_sections) == 1
+    assert edition.top_stories[0].event_id not in in_sections
+
+
 def test_only_the_selected_events_reach_the_llm(
     connection: sqlite3.Connection, output_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
