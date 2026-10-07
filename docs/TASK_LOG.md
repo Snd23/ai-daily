@@ -880,3 +880,33 @@ CI, other languages.
 
 **Verification:** the workflow runs on its own pull request; its result is the
 check reported there.
+
+## TASK-046 — Futuristic website redesign
+
+**Status:** DONE (awaiting approval/commit).
+
+**Motivation:** the user still disliked TASK-045's design (2026-10-03) and asked
+for a modern, futuristic, "AI-style" site, leaving the design choices to Claude.
+
+**Decisions:** stay on Python + Jinja + CSS (TASK-045). Dark-only look following
+current AI/tech product sites: glass panels, bento grid, aurora gradient accents,
+a geometric sans with a mono companion.
+
+**Scope:** `app/web/templates/`, `app/web/static/style.css`, page strings and the
+edition counts in `app/web/server.py`, `tests/test_web.py`.
+
+**Out of scope:** the stored edition, the composition, the PDF, any new product
+content (e.g. a visible verification status).
+
+**Changes:** hero with date and counts (stories, sources, reading time), bento
+grid for Top Stories with a gradient-bordered lead story, sticky section index,
+card grid per section, console-style Developer Impact / AI Senza Sbatti boxes,
+source chips, home page with the latest edition's headlines and the archive.
+`docs/ARCHITECTURE.md` §4.16.
+
+**Verification results:** `pytest` 1068 passed; `ruff check` OK; `mypy` OK.
+Screenshots on a seeded database at 1280 px and 390 px after the web fonts
+loaded; no horizontal overflow at 390 px (`scrollWidth` 390).
+
+**Flagged:** the light theme of TASK-045 is gone (dark only, by choice). Google
+Fonts are fetched by each visitor (see TASK-045).

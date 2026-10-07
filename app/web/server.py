@@ -47,6 +47,8 @@ _UI_TEXT: dict[str, dict[str, str]] = {
         "source": "fonte",
         "sources": "fonti",
         "minutes": "min",
+        "reading": "lettura",
+        "briefing": "Il briefing di oggi",
         "no_content": "Il contenuto di questa edizione non è disponibile sul sito.",
     },
     "en": {
@@ -63,9 +65,14 @@ _UI_TEXT: dict[str, dict[str, str]] = {
         "source": "source",
         "sources": "sources",
         "minutes": "min",
+        "reading": "reading",
+        "briefing": "Today's briefing",
         "no_content": "This edition's content is not available on the site.",
     },
 }
+# Average silent reading speed used for the reading-time estimate.
+_READING_WORDS_PER_MINUTE = 220
+
 _MONTH_NAMES: dict[str, tuple[str, ...]] = {
     "it": (
         "gennaio",
@@ -156,6 +163,7 @@ def create_app(database_url: str, language: str) -> Flask:
             "edition.html",
             heading=_edition_heading(record),
             edition=content,
+            stats=_edition_stats(content) if content is not None else None,
             labels=_page_labels(labels, record.language),
             has_pdf=record.pdf_path is not None,
             ui=_UI_TEXT[record.language],
@@ -185,6 +193,21 @@ def _published_edition(repository: EditionRepository, edition_number: int) -> Ed
 def _stored_edition(record: EditionRecord) -> Edition | None:
     """The composed edition saved at publication (TASK-043), or `None` if absent."""
     return Edition.model_validate_json(record.content) if record.content else None
+
+
+def _edition_stats(edition: Edition) -> dict[str, int]:
+    """Counts shown under the edition's headline: stories, sources, reading minutes."""
+    stories = {story.event_id: story for story in edition.top_stories}
+    for section in edition.sections:
+        stories.update({story.event_id: story for story in section.entries})
+    stories.update({story.event_id: story for story in edition.what_to_watch})
+    sources = {article.url for story in stories.values() for article in story.articles}
+    words = sum(len(story.summary.split()) for story in stories.values())
+    return {
+        "stories": len(stories),
+        "sources": len(sources),
+        "minutes": max(1, round(words / _READING_WORDS_PER_MINUTE)),
+    }
 
 
 def _headlines(record: EditionRecord) -> list[str]:
