@@ -1,19 +1,18 @@
-{% set paragraphs = story.summary.splitlines() | select("ne", "") | list %}
 {% set words = story.summary.split() | length %}
 <article class="story {{ variant | default('') }}">
-  <p class="kicker">
-    {% if kicker %}<span class="kicker-label">{{ kicker }}</span>{% endif %}
+  <p class="meta">
+    {% if kicker %}<span class="meta-kicker">{{ kicker }}</span>{% endif %}
     <span>{{ story.articles | length }} {{ ui.source if story.articles | length == 1 else ui.sources }}</span>
     <span>{{ [1, (words / 220) | round | int] | max }} {{ ui.minutes }}</span>
   </p>
   <h3 class="story-title">{{ story.title }}</h3>
   <div class="story-body">
-    {% for line in paragraphs if line.strip() %}<p>{{ line }}</p>{% endfor %}
+    {% for line in story.summary.splitlines() if line.strip() %}<p>{{ line }}</p>{% endfor %}
   </div>
   {% set impact = story.developer_impact %}
   {% if impact and impact.has_developer_impact and impact.impact_summary %}
-  <aside class="note note-dev">
-    <p class="note-label">Developer Impact</p>
+  <aside class="console">
+    <p class="console-label"><span aria-hidden="true">&gt;_</span> developer impact</p>
     <p>{{ impact.impact_summary }}</p>
     {% if impact.technical_area %}
     <ul class="tags">{% for area in impact.technical_area %}<li>{{ area }}</li>{% endfor %}</ul>
@@ -22,13 +21,13 @@
   {% endif %}
   {% set concept = story.concept_explanation %}
   {% if concept %}
-  <aside class="note note-concept">
-    <p class="note-label">AI Senza Sbatti</p>
+  <aside class="console console-concept">
+    <p class="console-label"><span aria-hidden="true">✦</span> AI Senza Sbatti</p>
     <p>{{ concept.technical_definition }}</p>
     <p>{{ concept.simple_explanation }}</p>
     <p>{{ concept.example }}</p>
     <p>{{ concept.why_it_matters }}</p>
-    <p class="note-oneliner">{{ concept.one_liner }}</p>
+    <p class="console-oneliner">{{ concept.one_liner }}</p>
   </aside>
   {% endif %}
   {% include "_sources.html" %}

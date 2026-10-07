@@ -4,26 +4,26 @@
 <main class="wrap">
   {% if editions %}
   {% set latest = editions[0] %}
-  <section class="latest" aria-labelledby="latest-title">
-    <p class="eyebrow">{{ ui.latest_edition }} <span class="dot" aria-hidden="true">·</span> {{ latest.label }}</p>
-    <h1 id="latest-title" class="edition-date"><a href="{{ url_for('edition', edition_number=latest.number) }}">{{ latest.date }}</a></h1>
+  <section class="hero" aria-labelledby="latest-title">
+    <p class="eyebrow"><span class="live">LIVE</span>{{ ui.latest_edition }} · {{ latest.label }}</p>
+    <h1 id="latest-title" class="hero-title"><a href="{{ url_for('edition', edition_number=latest.number) }}"><span class="gradient-text">{{ latest.date }}</span></a></h1>
     {% if latest.headlines %}
-    <ol class="latest-headlines">
+    <ol class="headlines">
       {% for headline in latest.headlines %}
-      <li><a href="{{ url_for('edition', edition_number=latest.number) }}">{{ headline }}</a></li>
+      <li><a class="panel" href="{{ url_for('edition', edition_number=latest.number) }}"><span class="headline-index">{{ "%02d" | format(loop.index) }}</span><span>{{ headline }}</span></a></li>
       {% endfor %}
     </ol>
     {% endif %}
-    <a class="pill-link pill-strong" href="{{ url_for('edition', edition_number=latest.number) }}">{{ ui.read_edition }} →</a>
+    <a class="glow-button glow-strong" href="{{ url_for('edition', edition_number=latest.number) }}">{{ ui.read_edition }} →</a>
   </section>
 
   {% if editions | length > 1 %}
   <section class="archive" aria-labelledby="archive-title">
-    <h2 id="archive-title" class="archive-title">{{ ui.archive }}</h2>
+    <h2 id="archive-title" class="eyebrow">{{ ui.archive }}</h2>
     <ul class="archive-list">
       {% for edition in editions[1:] %}
       <li>
-        <a href="{{ url_for('edition', edition_number=edition.number) }}">
+        <a class="panel" href="{{ url_for('edition', edition_number=edition.number) }}">
           <span class="archive-meta"><span>{{ edition.date }}</span><span>{{ edition.label }} · {{ edition.language | upper }}</span></span>
           {% if edition.headlines %}<span class="archive-headline">{{ edition.headlines[0] }}</span>{% endif %}
         </a>
@@ -33,7 +33,7 @@
   </section>
   {% endif %}
   {% else %}
-  <section class="empty-state"><p>{{ ui.no_editions }}</p></section>
+  <section class="hero"><p class="hero-note">{{ ui.no_editions }}</p></section>
   {% endif %}
 </main>
 {% endblock %}

@@ -1,51 +1,50 @@
 {% extends "base.html" %}
 {% block title %}AI Daily · {{ heading.date }}{% endblock %}
 {% block topbar %}
-<span class="topbar-meta">{{ heading.date }} <span class="dot" aria-hidden="true">·</span> {{ heading.label }}</span>
+<span class="topbar-meta"><span class="live">LIVE</span>{{ heading.date }} · {{ heading.label }}</span>
 <nav class="topbar-actions">
   <a class="ghost-link" href="{{ url_for('index') }}">{{ ui.archive }}</a>
-  {% if has_pdf %}<a class="pill-link" href="{{ url_for('edition_pdf', edition_number=heading.number) }}">{{ ui.download_pdf }} ↓</a>{% endif %}
+  {% if has_pdf %}<a class="glow-button" href="{{ url_for('edition_pdf', edition_number=heading.number) }}">{{ ui.download_pdf }} ↓</a>{% endif %}
 </nav>
 {% endblock %}
 {% block content %}
 {% if edition is none %}
-<main class="wrap empty-state">
-  <h1 class="edition-date">{{ heading.date }}</h1>
-  <p>{{ ui.no_content }}</p>
+<main class="wrap hero">
+  <p class="eyebrow">{{ heading.label }}</p>
+  <h1 class="hero-title">{{ heading.date }}</h1>
+  <p class="hero-note">{{ ui.no_content }}</p>
+  {% if has_pdf %}<a class="glow-button glow-strong" href="{{ url_for('edition_pdf', edition_number=heading.number) }}">{{ ui.download_pdf }} ↓</a>{% endif %}
 </main>
 {% else %}
 {% set filled = edition.sections | selectattr("entries") | list %}
 <main>
-  <section class="front wrap" aria-labelledby="front-title">
-    <header class="front-head">
-      <p class="eyebrow">{{ heading.label }}</p>
-      <h1 id="front-title" class="edition-date">{{ heading.date }}</h1>
-    </header>
-    {% if edition.top_stories %}
-    <div class="front-grid">
-      <div class="lead">
-        {% with story = edition.top_stories[0], variant = "story-lead", kicker = labels.top_stories %}{% include "_story.html" %}{% endwith %}
-      </div>
-      {% if edition.top_stories | length > 1 %}
-      <div class="seconds">
-        {% for story in edition.top_stories[1:] %}
-        {% with variant = "story-second", kicker = labels.top_stories %}{% include "_story.html" %}{% endwith %}
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-    {% endif %}
+  <section class="wrap hero" aria-labelledby="hero-title">
+    <p class="eyebrow">{{ ui.briefing }} · {{ heading.label }}</p>
+    <h1 id="hero-title" class="hero-title"><span class="gradient-text">{{ heading.date }}</span></h1>
+    <dl class="stats">
+      <div><dt>{{ ui.stories }}</dt><dd>{{ stats.stories }}</dd></div>
+      <div><dt>{{ ui.sources }}</dt><dd>{{ stats.sources }}</dd></div>
+      <div><dt>{{ ui.reading }}</dt><dd>{{ stats.minutes }}<small> {{ ui.minutes }}</small></dd></div>
+    </dl>
   </section>
 
-  {% if filled %}
+  {% if edition.top_stories %}
+  <section class="wrap bento" aria-label="{{ labels.top_stories }}">
+    {% with story = edition.top_stories[0], variant = "panel story-lead", kicker = labels.top_stories %}{% include "_story.html" %}{% endwith %}
+    {% for story in edition.top_stories[1:] %}
+    {% with variant = "panel story-second", kicker = labels.top_stories %}{% include "_story.html" %}{% endwith %}
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if filled or edition.what_to_watch %}
   <nav class="index-bar" aria-label="{{ ui.in_this_edition }}">
     <div class="wrap index-bar-inner">
-      <span class="index-bar-label">{{ ui.in_this_edition }}</span>
       <ul>
         {% for section in filled %}
-        <li><a href="#{{ section.slug }}">{{ section.label }} <span>{{ section.entries | length }}</span></a></li>
+        <li><a href="#{{ section.slug }}">{{ section.label }}<span>{{ section.entries | length }}</span></a></li>
         {% endfor %}
-        {% if edition.what_to_watch %}<li><a href="#what-to-watch">{{ labels.what_to_watch }} <span>{{ edition.what_to_watch | length }}</span></a></li>{% endif %}
+        {% if edition.what_to_watch %}<li><a href="#what-to-watch">{{ labels.what_to_watch }}<span>{{ edition.what_to_watch | length }}</span></a></li>{% endif %}
       </ul>
     </div>
   </nav>
@@ -58,9 +57,9 @@
         <h2 id="h-{{ section.slug }}">{{ section.label }}</h2>
         <span class="section-count">{{ section.entries | length }} {{ ui.story if section.entries | length == 1 else ui.stories }}</span>
       </header>
-      <div class="section-stories">
+      <div class="cards">
         {% for story in section.entries %}
-        {% with variant = "", kicker = none %}{% include "_story.html" %}{% endwith %}
+        {% with variant = "panel", kicker = none %}{% include "_story.html" %}{% endwith %}
         {% endfor %}
       </div>
     </section>
@@ -68,9 +67,9 @@
     {% if edition.what_to_watch %}
     <section class="section" id="what-to-watch" aria-labelledby="h-what-to-watch">
       <header class="section-head"><h2 id="h-what-to-watch">{{ labels.what_to_watch }}</h2></header>
-      <div class="section-stories">
+      <div class="cards">
         {% for story in edition.what_to_watch %}
-        {% with variant = "", kicker = none %}{% include "_story.html" %}{% endwith %}
+        {% with variant = "panel", kicker = none %}{% include "_story.html" %}{% endwith %}
         {% endfor %}
       </div>
     </section>

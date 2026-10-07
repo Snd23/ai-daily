@@ -165,6 +165,16 @@ def test_edition_page_shows_the_stored_content(database: _Database) -> None:
     assert "/editions/4/pdf" in page
 
 
+def test_edition_stats_count_each_story_and_source_once(database: _Database) -> None:
+    # A Top Story also appears in its section: it must be counted once.
+    database.add(10, edition=_edition(_content(event_id=1), _content(event_id=2)))
+
+    page = _client(database).get("/editions/10").get_data(as_text=True)
+
+    assert "<dt>stories</dt><dd>2</dd>" in page
+    assert "<dt>sources</dt><dd>1</dd>" in page  # both stories cite the same URL
+
+
 def test_untrusted_text_is_escaped_and_unsafe_urls_are_not_linked(database: _Database) -> None:
     hostile = _content(
         title="<script>alert(1)</script>",
